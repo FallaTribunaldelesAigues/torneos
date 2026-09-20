@@ -208,6 +208,7 @@
   .pin-error{ color:var(--red); font-size:12px; font-weight:600; margin-bottom:8px; }
   .modal-actions{ display:flex; gap:8px; margin-top:6px; }
   .modal-actions .btn{ flex:1; }
+
 </style>
 </head>
 <body>
@@ -232,29 +233,7 @@
 </div>
 <div id="modalRoot"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4"></script>
 <script>
-const SUPABASE_URL = 'https://igvhdnhodxpeiybzxhjb.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlndmhkbmhvZHhwZWl5Ynp4aGpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYzNTA3MTEsImV4cCI6MjEwMTkyNjcxMX0.rbXYl8gWJnmVC4G6s8V5V6H7eywV-ZnoC4LxbMEViEM';
-let sbClient = null;
-try{
-  if(window.supabase && typeof window.supabase.createClient === 'function'){
-    sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-  }
-}catch(e){ console.error('No se pudo inicializar Supabase', e); }
-
-async function dbGet(key){
-  if(!sbClient) throw new Error('La librería de Supabase no cargó (revisa tu conexión o si el proyecto está en pausa)');
-  const { data, error } = await sbClient.from('torneo_storage').select('value').eq('key', key).maybeSingle();
-  if(error) throw new Error(error.message || JSON.stringify(error));
-  return data ? data.value : null;
-}
-async function dbSet(key, value){
-  if(!sbClient) throw new Error('La librería de Supabase no cargó (revisa tu conexión o si el proyecto está en pausa)');
-  const { error } = await sbClient.from('torneo_storage').upsert({ key, value, updated_at: new Date().toISOString() });
-  if(error) throw new Error(error.message || JSON.stringify(error));
-}
-
 const ICONS = {
   domino: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
     <rect x="4" y="2.5" width="16" height="19" rx="2.4"/>
@@ -306,12 +285,15 @@ let unlocked = false;
 function uid(){ return Math.random().toString(36).slice(2,9); }
 function esc(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+function isIndividual(game){ return game === 'chinchon'; }
+function isParchis(game){ return game === 'parchis'; }
+
 function pairDisplayName(p){
   if(!p) return '—';
   if(p.j1nombre || p.j2nombre){
     const n1 = `${p.j1nombre||''} ${p.j1apellidos||''}`.trim();
     const n2 = `${p.j2nombre||''} ${p.j2apellidos||''}`.trim();
-    return `${n1} & ${n2}`;
+    return n2 ? `${n1} & ${n2}` : n1;
   }
   return p.nombre || '—'; // backwards compatibility with older data
 }
@@ -330,8 +312,8 @@ let dataLoadError = null;
 
 async function loadData(){
   try{
-    const val = await dbGet(STORAGE_KEY);
-    state = val ? JSON.parse(val) : defaultState();
+    const res = await window.storage.get(STORAGE_KEY, true);
+    state = res && res.value ? JSON.parse(res.value) : defaultState();
     dataLoadError = null;
   }catch(e){
     console.error('Error cargando', e);
@@ -350,15 +332,14 @@ async function loadData(){
 function renderErrorBanner(){
   if(!dataLoadError) return '';
   return `<div style="background:#C1272D;color:#FAF3DC;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;font-weight:600;">
-    ⚠️ No se pudo conectar con la base de datos: ${esc(dataLoadError)}<br>
-    <span style="font-weight:400;">Comprueba tu conexión a internet o si el proyecto de Supabase está en pausa (plan gratuito) y recarga la página.</span>
+    ⚠️ No se pudo conectar con la base de datos: ${esc(dataLoadError)}
   </div>`;
 }
 
 let saving = false;
 async function saveData(){
   try{
-    await dbSet(STORAGE_KEY, JSON.stringify(state));
+    await window.storage.set(STORAGE_KEY, JSON.stringify(state), true);
     dataLoadError = null;
   }catch(e){
     console.error('Error guardando', e);
@@ -368,9 +349,13 @@ async function saveData(){
 
 async function loadPinState(){
   try{
-    pinConfigured = await dbGet(PIN_KEY);
+    const res = await window.storage.get(PIN_KEY, true);
+    pinConfigured = res && res.value ? res.value : null;
   }catch(e){ pinConfigured = null; }
-  unlocked = localStorage.getItem(PIN_UNLOCKED_KEY) === 'true';
+  try{
+    const res2 = await window.storage.get(PIN_UNLOCKED_KEY, false);
+    unlocked = !!(res2 && res2.value === 'true');
+  }catch(e){ unlocked = false; }
 }
 
 function updateLockBadge(){
@@ -406,16 +391,16 @@ function showPinModal(onSuccess){
     if(!val) return;
     if(configuring){
       pinConfigured = val;
-      await dbSet(PIN_KEY, val);
+      await window.storage.set(PIN_KEY, val, true);
       unlocked = true;
-      localStorage.setItem(PIN_UNLOCKED_KEY, 'true');
+      await window.storage.set(PIN_UNLOCKED_KEY, 'true', false);
       root.innerHTML = '';
       updateLockBadge();
       render();
       if(onSuccess) onSuccess();
     } else if(val === pinConfigured){
       unlocked = true;
-      localStorage.setItem(PIN_UNLOCKED_KEY, 'true');
+      await window.storage.set(PIN_UNLOCKED_KEY, 'true', false);
       root.innerHTML = '';
       updateLockBadge();
       render();
@@ -429,19 +414,20 @@ function showPinModal(onSuccess){
 function showEditPairModal(game, pairId){
   const p = state.games[game].pairs.find(p => p.id === pairId);
   if(!p) return;
+  const individual = isIndividual(game);
   const root = document.getElementById('modalRoot');
   root.innerHTML = `<div class="modal-overlay" id="editOverlay">
     <div class="modal-card">
-      <h3>Editar pareja</h3>
-      <p class="modal-desc">Corrige el nombre de alguno de los dos jugadores.</p>
+      <h3>${individual ? 'Editar jugador' : 'Editar pareja'}</h3>
+      <p class="modal-desc">${individual ? 'Corrige el nombre del jugador.' : 'Corrige el nombre de alguno de los dos jugadores.'}</p>
       <div style="text-align:left;margin-bottom:8px;">
-        <label style="font-size:11.5px;font-weight:600;color:#54607a;">Jugador 1</label>
+        <label style="font-size:11.5px;font-weight:600;color:#54607a;">${individual ? 'Nombre' : 'Jugador 1'}</label>
         <input id="editJ1" value="${esc(p.j1nombre||'')}" style="margin-top:4px;">
       </div>
-      <div style="text-align:left;margin-bottom:8px;">
+      ${individual ? '' : `<div style="text-align:left;margin-bottom:8px;">
         <label style="font-size:11.5px;font-weight:600;color:#54607a;">Jugador 2</label>
         <input id="editJ2" value="${esc(p.j2nombre||'')}" style="margin-top:4px;">
-      </div>
+      </div>`}
       <div class="modal-actions">
         <button class="btn secondary" id="editCancel" type="button">Cancelar</button>
         <button class="btn" id="editSave" type="button">Guardar</button>
@@ -452,8 +438,8 @@ function showEditPairModal(game, pairId){
   document.getElementById('editCancel').onclick = () => { root.innerHTML = ''; };
   document.getElementById('editSave').onclick = () => {
     const j1 = document.getElementById('editJ1').value.trim();
-    const j2 = document.getElementById('editJ2').value.trim();
-    if(!j1 || !j2) return;
+    const j2 = individual ? '' : document.getElementById('editJ2').value.trim();
+    if(!j1 || (!individual && !j2)) return;
     p.j1nombre = j1;
     p.j2nombre = j2;
     root.innerHTML = '';
@@ -472,14 +458,24 @@ function computeStandings(game, grupo){
   const pairs = g.pairs.filter(p => p.grupo === grupo);
   const stats = {};
   pairs.forEach(p => stats[p.id] = { id:p.id, nombre:pairDisplayName(p), pj:0, g:0, pf:0, pc:0 });
+  const parchis = isParchis(game);
   g.groupMatches.filter(m => m.grupo === grupo && m.played).forEach(m => {
     if(!stats[m.pair1] || !stats[m.pair2]) return;
     stats[m.pair1].pj++; stats[m.pair2].pj++;
-    stats[m.pair1].pf += m.score1; stats[m.pair1].pc += m.score2;
-    stats[m.pair2].pf += m.score2; stats[m.pair2].pc += m.score1;
-    if(m.score1 > m.score2) stats[m.pair1].g++;
-    else if(m.score2 > m.score1) stats[m.pair2].g++;
+    if(parchis){
+      const fichas = Number(m.fichasFuera)||0;
+      if(m.score1 > m.score2){ stats[m.pair1].g++; stats[m.pair1].pf += fichas; stats[m.pair2].pc += fichas; }
+      else if(m.score2 > m.score1){ stats[m.pair2].g++; stats[m.pair2].pf += fichas; stats[m.pair1].pc += fichas; }
+    } else {
+      stats[m.pair1].pf += m.score1; stats[m.pair1].pc += m.score2;
+      stats[m.pair2].pf += m.score2; stats[m.pair2].pc += m.score1;
+      if(m.score1 > m.score2) stats[m.pair1].g++;
+      else if(m.score2 > m.score1) stats[m.pair2].g++;
+    }
   });
+  if(parchis){
+    return Object.values(stats).sort((a,b) => (b.g - a.g) || (b.pf - a.pf));
+  }
   return Object.values(stats).sort((a,b) => (b.g - a.g) || ((b.pf-b.pc) - (a.pf-a.pc)) || (b.pf - a.pf));
 }
 
@@ -518,7 +514,8 @@ function renderHome(){
   Object.entries(GAMES).forEach(([key,meta]) => {
     const g = state.games[key];
     const champ = getChampion(key);
-    const status = champ ? `🏆 ${esc(champ)}` : `${g.pairs.length} pareja${g.pairs.length===1?'':'s'}`;
+    const unidad = isIndividual(key) ? 'jugador' : 'pareja';
+    const status = champ ? `🏆 ${esc(champ)}` : `${g.pairs.length} ${unidad}${g.pairs.length===1?'':'s'}`;
     html += `<button class="homebtn" data-tab="${key}">
       <span class="bigdot" style="background:${meta.color}">${meta.icon}</span>
       <span class="gname">${meta.name}</span>
@@ -546,10 +543,10 @@ function renderResumen(){
       <div class="dot" style="background:${meta.color}">${meta.icon}</div>
       <div class="info">
         <div class="g">${meta.name}</div>
-        <div class="s">${g.pairs.length} pareja${g.pairs.length===1?'':'s'} inscrita${g.pairs.length===1?'':'s'}</div>
+        <div class="s">${g.pairs.length} ${isIndividual(key)?'jugador':'pareja'}${g.pairs.length===1?'':'s'} inscrit${isIndividual(key)?'o':'a'}${g.pairs.length===1?'':'s'}</div>
       </div>
       <div class="champ">
-        ${champ ? `<span class="tag">Campeones</span>🏆 ${esc(champ)}` : `<span class="tag">Estado</span>En juego`}
+        ${champ ? `<span class="tag">${isIndividual(key)?'Campeón':'Campeones'}</span>🏆 ${esc(champ)}` : `<span class="tag">Estado</span>En juego`}
       </div>
     </div>`;
   });
@@ -575,7 +572,7 @@ function renderGamePage(game){
   }
   html += `<div class="subtabbar">
     <button class="subtab ${sub==='apuntarse'?'active':''}" data-subtab="apuntarse" data-game="${game}">Apuntarse</button>
-    <button class="subtab ${sub==='parejas'?'active':''}" data-subtab="parejas" data-game="${game}">Parejas apuntadas</button>
+    <button class="subtab ${sub==='parejas'?'active':''}" data-subtab="parejas" data-game="${game}">${isIndividual(game)?'Jugadores apuntados':'Parejas apuntadas'}</button>
     ${showGrupos ? `<button class="subtab ${sub==='grupos'?'active':''}" data-subtab="grupos" data-game="${game}">Grupos</button>` : ''}
     ${showElim ? `<button class="subtab ${sub==='eliminatoria'?'active':''}" data-subtab="eliminatoria" data-game="${game}">Eliminatoria</button>` : ''}
     ${unlocked ? `<button class="subtab ${sub==='ajustes'?'active':''}" data-subtab="ajustes" data-game="${game}">Ajustes</button>` : ''}
@@ -589,17 +586,18 @@ function renderGamePage(game){
 }
 
 function renderApuntarse(game){
+  const individual = isIndividual(game);
   let html = `<div class="card">
     <h2>Apúntate a ${GAMES[game].name}</h2>
-    <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">Se juega en parejas. Escribe el nombre y apellidos de los dos jugadores.</p>
+    <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">${individual ? 'Se juega individual. Escribe tu nombre y apellidos.' : 'Se juega en parejas. Escribe el nombre y apellidos de los dos jugadores.'}</p>
     <form data-action="register-pair" data-game="${game}">
       <div class="row">
-        <div class="field"><label>Jugador 1 — Nombre y apellidos</label><input name="j1nombre" placeholder="Ej. Ana García" required></div>
+        <div class="field"><label>${individual ? 'Nombre y apellidos' : 'Jugador 1 — Nombre y apellidos'}</label><input name="j1nombre" placeholder="Ej. Ana García" required></div>
       </div>
-      <div class="row" style="margin-top:8px;">
+      ${individual ? '' : `<div class="row" style="margin-top:8px;">
         <div class="field"><label>Jugador 2 — Nombre y apellidos</label><input name="j2nombre" placeholder="Ej. Bea Martí" required></div>
-      </div>
-      <button class="btn" type="submit" style="margin-top:10px;">Apuntar pareja</button>
+      </div>`}
+      <button class="btn" type="submit" style="margin-top:10px;">${individual ? 'Apuntarme' : 'Apuntar pareja'}</button>
     </form>
   </div>`;
   return html;
@@ -607,9 +605,10 @@ function renderApuntarse(game){
 
 function renderParejasApuntadas(game){
   const g = state.games[game];
+  const individual = isIndividual(game);
   const sinGrupo = g.pairs.filter(p => !p.grupo);
   const totalInscritas = g.pairs.length;
-  let html = `<div class="card"><h3>Parejas apuntadas — ${totalInscritas}</h3>`;
+  let html = `<div class="card"><h3>${individual?'Jugadores apuntados':'Parejas apuntadas'} — ${totalInscritas}</h3>`;
   if(totalInscritas === 0){
     html += `<div class="empty">Todavía no se ha apuntado nadie.</div></div>`;
   } else {
@@ -633,7 +632,7 @@ function renderParejasApuntadas(game){
           <button class="iconbtn" type="button" data-action="edit-pair" data-game="${game}" data-id="${p.id}" title="Editar">✏️</button>
           <button class="iconbtn" type="button" data-action="delete-pair" data-game="${game}" data-id="${p.id}" title="Eliminar">✕</button>
         </form>`).join('') + `</div>
-        <p style="font-size:11.5px;color:#7c8598;margin-top:8px;">La organización asigna el grupo de cada pareja (requiere PIN).</p>`;
+        <p style="font-size:11.5px;color:#7c8598;margin-top:8px;">La organización asigna el grupo de cada ${individual?'jugador':'pareja'} (requiere PIN).</p>`;
     }
     html += `</div>`;
   }
@@ -643,9 +642,10 @@ function renderParejasApuntadas(game){
 
 function renderGroups(game){
   const g = state.games[game];
+  const individual = isIndividual(game);
   let html = '';
   if(g.pairs.length === 0){
-    return `<div class="card"><div class="empty">Añade parejas primero en la pestaña «Parejas» para poder registrar resultados de grupo.</div></div>`;
+    return `<div class="card"><div class="empty">Añade ${individual?'jugadores':'parejas'} primero en la pestaña «${individual?'Jugadores':'Parejas'}» para poder registrar resultados de grupo.</div></div>`;
   }
   g.groups.forEach(gr => {
     const pairsInGroup = g.pairs.filter(p => p.grupo === gr);
@@ -655,14 +655,17 @@ function renderGroups(game){
     const played = matches.filter(m => m.played);
     html += `<div class="card"><h2>Grupo ${gr}</h2>`;
     if(pairsInGroup.length < 2){
-      html += `<div class="empty">Se necesitan al menos 2 parejas en este grupo.</div></div>`;
+      html += `<div class="empty">Se necesitan al menos 2 ${individual?'jugadores':'parejas'} en este grupo.</div></div>`;
       return;
     }
+    const parchis = isParchis(game);
     html += `<table class="standings"><thead><tr>
-      <th>Pareja</th><th>PJ</th><th>G</th><th>PF</th><th>PC</th><th>Dif</th>
+      <th>${individual?'Jugador':'Pareja'}</th><th>PJ</th><th>G</th>${parchis ? '<th>Fichas fuera</th>' : '<th>PF</th><th>PC</th><th>Dif</th>'}
     </tr></thead><tbody>`;
     standings.forEach(s => {
-      html += `<tr><td>${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td><td>${s.pf}</td><td>${s.pc}</td><td>${s.pf-s.pc>0?'+':''}${s.pf-s.pc}</td></tr>`;
+      html += parchis
+        ? `<tr><td>${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td><td>${s.pf}</td></tr>`
+        : `<tr><td>${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td><td>${s.pf}</td><td>${s.pc}</td><td>${s.pf-s.pc>0?'+':''}${s.pf-s.pc}</td></tr>`;
     });
     html += `</tbody></table>`;
 
@@ -684,16 +687,29 @@ function renderGroups(game){
             <button class="btn secondary small" type="submit">Guardar fecha</button>
           </form>
           <form data-action="enter-result" data-game="${game}" data-id="${m.id}" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            ${parchis ? `
+            <select name="ganador" style="flex:0 0 auto;">
+              <option value="pair1">${esc(pairName(game,m.pair1))}</option>
+              <option value="pair2">${esc(pairName(game,m.pair2))}</option>
+            </select>
+            <input type="number" name="fichasFuera" placeholder="Fichas fuera" min="0" style="width:120px;flex:0 0 auto;" required>
+            ` : `
             <input type="number" name="score1" placeholder="Pts" style="width:60px;flex:0 0 auto;" required>
             <span>–</span>
             <input type="number" name="score2" placeholder="Pts" style="width:60px;flex:0 0 auto;" required>
+            `}
             <button class="btn small" type="submit">Guardar resultado</button>
           </form>
         </div>`).join('') + `</div>`;
     }
 
     if(played.length){
-      html += `<h3 style="margin-top:14px;">Jugados</h3><div class="matchlist">` + played.map(m => `
+      html += `<h3 style="margin-top:14px;">Jugados</h3><div class="matchlist">` + played.map(m => parchis ? `
+        <div class="matchrow">
+          <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}<span class="win">🏆 ${esc(pairName(game, m.score1>m.score2?m.pair1:m.pair2))}</span> gana a ${esc(pairName(game, m.score1>m.score2?m.pair2:m.pair1))}</span>
+          <span class="score">+${m.fichasFuera||0} fichas</span>
+          <button class="iconbtn" data-action="delete-groupmatch" data-game="${game}" data-id="${m.id}">✕</button>
+        </div>` : `
         <div class="matchrow">
           <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}${m.score1>m.score2?'<span class=\"win\">':''}${esc(pairName(game,m.pair1))}${m.score1>m.score2?'</span>':''}
             vs
@@ -706,10 +722,13 @@ function renderGroups(game){
     const pairOptions = pairsInGroup.map(p => `<option value="${p.id}">${esc(pairDisplayName(p))}</option>`).join('');
     html += `<h3 style="margin-top:14px;">Añadir partido suelto</h3>
     <form class="row" data-action="add-groupmatch" data-game="${game}" data-grupo="${gr}">
-      <div class="field"><label>Pareja 1</label><select name="pair1" required>${pairOptions}</select></div>
-      <div class="field" style="flex:0 0 70px;"><label>Pts</label><input type="number" name="score1" required></div>
-      <div class="field"><label>Pareja 2</label><select name="pair2" required>${pairOptions}</select></div>
-      <div class="field" style="flex:0 0 70px;"><label>Pts</label><input type="number" name="score2" required></div>
+      <div class="field"><label>${individual?'Jugador 1':'Pareja 1'}</label><select name="pair1" required>${pairOptions}</select></div>
+      ${parchis ? '' : `<div class="field" style="flex:0 0 70px;"><label>Pts</label><input type="number" name="score1" required></div>`}
+      <div class="field"><label>${individual?'Jugador 2':'Pareja 2'}</label><select name="pair2" required>${pairOptions}</select></div>
+      ${parchis ? `
+      <div class="field"><label>Ganadora</label><select name="ganador" required><option value="pair1">Pareja 1 (arriba)</option><option value="pair2">Pareja 2 (abajo)</option></select></div>
+      <div class="field" style="flex:0 0 130px;"><label>Fichas fuera</label><input type="number" name="fichasFuera" min="0" required></div>
+      ` : `<div class="field" style="flex:0 0 70px;"><label>Pts</label><input type="number" name="score2" required></div>`}
       <div class="field" style="flex:0 0 150px;"><label>Fecha (opcional)</label><input type="date" name="fecha"></div>
       <button class="btn" type="submit">Guardar</button>
     </form>`;
@@ -720,15 +739,17 @@ function renderGroups(game){
 
 function renderKnockout(game){
   const g = state.games[game];
+  const individual = isIndividual(game);
   const champ = getChampion(game);
   let html = '';
   if(champ){
-    html += `<div class="champion-banner"><div class="label">Campeones ${GAMES[game].name}</div><div class="name">🏆 ${esc(champ)}</div></div>`;
+    html += `<div class="champion-banner"><div class="label">${individual?'Campeón':'Campeones'} ${GAMES[game].name}</div><div class="name">🏆 ${esc(champ)}</div></div>`;
   }
   const assignedPairs = g.pairs.filter(p => p.grupo);
   if(assignedPairs.length < 2){
-    return html + `<div class="card"><div class="empty">Necesitas al menos 2 parejas asignadas a un grupo para crear cruces de eliminatoria.</div></div>`;
+    return html + `<div class="card"><div class="empty">Necesitas al menos 2 ${individual?'jugadores':'parejas'} asignad${individual?'os':'as'} a un grupo para crear cruces de eliminatoria.</div></div>`;
   }
+  const parchis = isParchis(game);
   const pairOptions = assignedPairs.map(p => `<option value="${p.id}">${esc(pairDisplayName(p))} (Grupo ${p.grupo})</option>`).join('');
   html += `<div class="card">
     <h2>Añadir cruce</h2>
@@ -737,10 +758,12 @@ function renderKnockout(game){
         <label>Ronda</label>
         <select name="ronda">${ROUND_ORDER.map(r=>`<option value="${r}">${r}</option>`).join('')}</select>
       </div>
-      <div class="field"><label>Pareja 1</label><select name="pair1" required>${pairOptions}</select></div>
-      <div class="field" style="flex:0 0 70px;"><label>Pts</label><input type="number" name="score1" required></div>
-      <div class="field"><label>Pareja 2</label><select name="pair2" required>${pairOptions}</select></div>
-      <div class="field" style="flex:0 0 70px;"><label>Pts</label><input type="number" name="score2" required></div>
+      <div class="field"><label>${individual?'Jugador 1':'Pareja 1'}</label><select name="pair1" required>${pairOptions}</select></div>
+      ${parchis ? '' : `<div class="field" style="flex:0 0 70px;"><label>Pts</label><input type="number" name="score1" required></div>`}
+      <div class="field"><label>${individual?'Jugador 2':'Pareja 2'}</label><select name="pair2" required>${pairOptions}</select></div>
+      ${parchis ? `
+      <div class="field"><label>Ganadora</label><select name="ganador" required><option value="pair1">${individual?'Jugador 1':'Pareja 1'} (arriba)</option><option value="pair2">${individual?'Jugador 2':'Pareja 2'} (abajo)</option></select></div>
+      ` : `<div class="field" style="flex:0 0 70px;"><label>Pts</label><input type="number" name="score2" required></div>`}
       <div class="field" style="flex:0 0 150px;"><label>Fecha (opcional)</label><input type="date" name="fecha"></div>
       <button class="btn" type="submit">Guardar cruce</button>
     </form>
@@ -756,13 +779,22 @@ function renderKnockout(game){
     roundsPresent.forEach(r => {
       html += `<div class="ko-round"><h4>${r}</h4><div class="matchlist">`;
       byRound[r].forEach(m => {
-        html += `<div class="matchrow">
-          <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}${m.score1>m.score2?'<span class=\"win\">':''}${esc(pairName(game,m.pair1))}${m.score1>m.score2?'</span>':''}
-            vs
-            ${m.score2>m.score1?'<span class=\"win\">':''}${esc(pairName(game,m.pair2))}${m.score2>m.score1?'</span>':''}</span>
-          <span class="score">${m.score1} – ${m.score2}</span>
-          <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
-        </div>`;
+        if(parchis){
+          const winner = m.score1>m.score2 ? m.pair1 : m.pair2;
+          const loser = m.score1>m.score2 ? m.pair2 : m.pair1;
+          html += `<div class="matchrow">
+            <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}<span class="win">🏆 ${esc(pairName(game,winner))}</span> gana a ${esc(pairName(game,loser))}</span>
+            <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
+          </div>`;
+        } else {
+          html += `<div class="matchrow">
+            <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}${m.score1>m.score2?'<span class=\"win\">':''}${esc(pairName(game,m.pair1))}${m.score1>m.score2?'</span>':''}
+              vs
+              ${m.score2>m.score1?'<span class=\"win\">':''}${esc(pairName(game,m.pair2))}${m.score2>m.score1?'</span>':''}</span>
+            <span class="score">${m.score1} – ${m.score2}</span>
+            <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
+          </div>`;
+        }
       });
       html += `</div></div>`;
     });
@@ -910,9 +942,10 @@ document.addEventListener('submit', e => {
 
   // Public: signing up a pair never requires the PIN.
   if(action === 'register-pair'){
+    const individual = isIndividual(game);
     const j1nombre = (fd.get('j1nombre')||'').trim();
-    const j2nombre = (fd.get('j2nombre')||'').trim();
-    if(!j1nombre || !j2nombre) return;
+    const j2nombre = individual ? '' : (fd.get('j2nombre')||'').trim();
+    if(!j1nombre || (!individual && !j2nombre)) return;
     state.games[game].pairs.push({ id: uid(), j1nombre, j2nombre, grupo: null });
     form.reset();
     saveData();
@@ -942,17 +975,35 @@ document.addEventListener('submit', e => {
     if(action === 'add-groupmatch'){
       const grupo = form.dataset.grupo;
       const pair1 = fd.get('pair1'), pair2 = fd.get('pair2');
-      const score1 = Number(fd.get('score1')), score2 = Number(fd.get('score2'));
       const fecha = (fd.get('fecha')||'').trim();
-      if(pair1 === pair2){ alert('Elige dos parejas distintas.'); return; }
-      state.games[game].groupMatches.push({ id: uid(), grupo, pair1, pair2, score1, score2, played: true, fecha });
+      if(pair1 === pair2){ alert(isIndividual(game) ? 'Elige dos jugadores distintos.' : 'Elige dos parejas distintas.'); return; }
+      if(isParchis(game)){
+        const ganador = fd.get('ganador');
+        const fichasFuera = Number(fd.get('fichasFuera'))||0;
+        const score1 = ganador === 'pair1' ? 1 : 0;
+        const score2 = ganador === 'pair2' ? 1 : 0;
+        state.games[game].groupMatches.push({ id: uid(), grupo, pair1, pair2, score1, score2, fichasFuera, played: true, fecha });
+      } else {
+        const score1 = Number(fd.get('score1')), score2 = Number(fd.get('score2'));
+        state.games[game].groupMatches.push({ id: uid(), grupo, pair1, pair2, score1, score2, played: true, fecha });
+      }
     }
 
     if(action === 'enter-result'){
       const id = form.dataset.id;
-      const score1 = Number(fd.get('score1')), score2 = Number(fd.get('score2'));
       const m = state.games[game].groupMatches.find(m => m.id === id);
-      if(m){ m.score1 = score1; m.score2 = score2; m.played = true; }
+      if(m){
+        if(isParchis(game)){
+          const ganador = fd.get('ganador');
+          m.score1 = ganador === 'pair1' ? 1 : 0;
+          m.score2 = ganador === 'pair2' ? 1 : 0;
+          m.fichasFuera = Number(fd.get('fichasFuera'))||0;
+        } else {
+          m.score1 = Number(fd.get('score1'));
+          m.score2 = Number(fd.get('score2'));
+        }
+        m.played = true;
+      }
     }
 
     if(action === 'set-match-date'){
@@ -965,10 +1016,17 @@ document.addEventListener('submit', e => {
     if(action === 'add-komatch'){
       const ronda = fd.get('ronda');
       const pair1 = fd.get('pair1'), pair2 = fd.get('pair2');
-      const score1 = Number(fd.get('score1')), score2 = Number(fd.get('score2'));
       const fecha = (fd.get('fecha')||'').trim();
-      if(pair1 === pair2){ alert('Elige dos parejas distintas.'); return; }
-      state.games[game].koMatches.push({ id: uid(), ronda, pair1, pair2, score1, score2, played:true, fecha });
+      if(pair1 === pair2){ alert(isIndividual(game) ? 'Elige dos jugadores distintos.' : 'Elige dos parejas distintas.'); return; }
+      if(isParchis(game)){
+        const ganador = fd.get('ganador');
+        const score1 = ganador === 'pair1' ? 1 : 0;
+        const score2 = ganador === 'pair2' ? 1 : 0;
+        state.games[game].koMatches.push({ id: uid(), ronda, pair1, pair2, score1, score2, played:true, fecha });
+      } else {
+        const score1 = Number(fd.get('score1')), score2 = Number(fd.get('score2'));
+        state.games[game].koMatches.push({ id: uid(), ronda, pair1, pair2, score1, score2, played:true, fecha });
+      }
     }
 
     saveData();
@@ -982,7 +1040,7 @@ document.getElementById('lockBadge').addEventListener('click', () => {
   if(unlocked){
     if(confirm('¿Bloquear la edición en este dispositivo? Habrá que volver a introducir el PIN.')){
       unlocked = false;
-      window.localStorage.setItem(PIN_UNLOCKED_KEY, 'false');
+      window.storage.set(PIN_UNLOCKED_KEY, 'false', false);
       updateLockBadge();
       render();
     }
