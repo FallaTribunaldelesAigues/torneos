@@ -164,6 +164,48 @@
   .ko-round{ margin-bottom:14px; }
   .ko-round h4{ font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--red); margin:0 0 6px; }
 
+  .bracket-card{ background:var(--felt-dark); border:2px solid var(--felt-light); }
+  .bracket-scroll{ overflow-x:auto; padding:6px 2px; }
+  .bracket{ display:flex; align-items:stretch; min-width:min-content; }
+  .bracket.bracket-k1{ justify-content:center; }
+  .bracket-round{ display:flex; flex-direction:column; justify-content:space-around; gap:8px; min-width:170px; }
+  .bracket-match{
+    background:var(--paper); border:2px solid var(--ink); border-radius:10px;
+    padding:8px 26px 8px 10px; font-size:12.5px; font-weight:700; position:relative;
+    display:flex; flex-direction:column; gap:3px; min-height:46px; justify-content:center;
+    box-shadow:0 3px 8px rgba(0,0,0,.25);
+  }
+  .bracket-match.empty{
+    color:#8b95a8; font-weight:400; font-style:italic; justify-content:center; align-items:center;
+    background:rgba(250,243,220,.35); border-style:dashed; box-shadow:none; text-align:center;
+  }
+  .bracket-final .bracket-match{ border-color:var(--gold); border-width:3px; }
+  .bside{ display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--ink); }
+  .bside.win{ color:var(--green); }
+  .bside.win .bname::before{ content:'🏆 '; }
+  .bname{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bscore{ font-family:'IBM Plex Mono',monospace; flex:0 0 auto; }
+  .bmeta{ font-size:10px; font-weight:400; color:#7c8598; }
+  .bracket-del{
+    position:absolute; top:4px; right:4px; width:18px; height:18px; font-size:10px;
+    padding:0; display:flex; align-items:center; justify-content:center;
+  }
+  .bracket-connector{ position:relative; width:22px; flex:0 0 22px; }
+  .bracket-connector.c-pair::before{
+    content:''; position:absolute; left:0; top:25%; bottom:25%; width:2px; background:var(--gold);
+  }
+  .bracket-connector.c-pair::after, .bracket-connector.c-1to1::after{
+    content:''; position:absolute; left:0; top:50%; width:100%; height:2px; background:var(--gold);
+  }
+  .bracket-connector.mirror::before{ left:auto; right:0; }
+  .bracket-connector.mirror::after{ left:auto; right:0; }
+
+  @media (max-width:640px){
+    .bracket-round{ min-width:130px; gap:6px; }
+    .bracket-match{ font-size:11px; padding:7px 22px 7px 8px; min-height:40px; }
+    .bracket-connector{ width:14px; flex:0 0 14px; }
+  }
+
   .champion-banner{
     background:linear-gradient(135deg,var(--gold),var(--orange)); color:var(--ink);
     border-radius:12px; padding:14px; text-align:center; margin-bottom:14px;
@@ -816,32 +858,105 @@ function renderKnockout(game){
   if(roundsPresent.length === 0){
     html += `<div class="card"><div class="empty">Todavía no hay cruces registrados.</div></div>`;
   } else {
-    html += `<div class="card">`;
-    roundsPresent.forEach(r => {
-      html += `<div class="ko-round"><h4>${r}</h4><div class="matchlist">`;
-      byRound[r].forEach(m => {
-        if(parchis){
-          const winner = m.score1>m.score2 ? m.pair1 : m.pair2;
-          const loser = m.score1>m.score2 ? m.pair2 : m.pair1;
-          html += `<div class="matchrow">
-            <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}<span class="win">🏆 ${esc(pairName(game,winner))}</span> gana a ${esc(pairName(game,loser))}</span>
-            <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
-          </div>`;
-        } else {
-          html += `<div class="matchrow">
-            <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}${m.score1>m.score2?'<span class=\"win\">':''}${esc(pairName(game,m.pair1))}${m.score1>m.score2?'</span>':''}
-              vs
-              ${m.score2>m.score1?'<span class=\"win\">':''}${esc(pairName(game,m.pair2))}${m.score2>m.score1?'</span>':''}</span>
-            <span class="score">${m.score1} – ${m.score2}</span>
-            <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
-          </div>`;
-        }
+    const bracketHtml = renderBracketTree(game, byRound);
+    if(bracketHtml){
+      html += `<div class="card bracket-card"><div class="bracket-scroll">${bracketHtml}</div></div>`;
+    } else {
+      html += `<div class="card">`;
+      roundsPresent.forEach(r => {
+        html += `<div class="ko-round"><h4>${r}</h4><div class="matchlist">`;
+        byRound[r].forEach(m => {
+          if(parchis){
+            const winner = m.score1>m.score2 ? m.pair1 : m.pair2;
+            const loser = m.score1>m.score2 ? m.pair2 : m.pair1;
+            html += `<div class="matchrow">
+              <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}<span class="win">🏆 ${esc(pairName(game,winner))}</span> gana a ${esc(pairName(game,loser))}</span>
+              <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
+            </div>`;
+          } else {
+            html += `<div class="matchrow">
+              <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}${m.score1>m.score2?'<span class=\"win\">':''}${esc(pairName(game,m.pair1))}${m.score1>m.score2?'</span>':''}
+                vs
+                ${m.score2>m.score1?'<span class=\"win\">':''}${esc(pairName(game,m.pair2))}${m.score2>m.score1?'</span>':''}</span>
+              <span class="score">${m.score1} – ${m.score2}</span>
+              <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
+            </div>`;
+          }
+        });
+        html += `</div></div>`;
       });
-      html += `</div></div>`;
-    });
-    html += `</div>`;
+      html += `</div>`;
+    }
   }
   return html;
+}
+
+function bracketMatchBox(game, m){
+  if(!m) return `<div class="bracket-match empty">Por jugar</div>`;
+  const parchis = isParchis(game);
+  const p1win = m.score1 > m.score2;
+  const p2win = m.score2 > m.score1;
+  return `<div class="bracket-match">
+    <button class="iconbtn bracket-del" data-action="delete-komatch" data-game="${game}" data-id="${m.id}" title="Eliminar">✕</button>
+    <div class="bside ${p1win?'win':''}"><span class="bname">${esc(pairName(game,m.pair1))}</span>${parchis?'':`<span class="bscore">${m.score1}</span>`}</div>
+    <div class="bside ${p2win?'win':''}"><span class="bname">${esc(pairName(game,m.pair2))}</span>${parchis?'':`<span class="bscore">${m.score2}</span>`}</div>
+    ${parchis && m.fichasFuera!=null ? `<div class="bmeta">🏆 +${m.fichasFuera} fichas</div>` : ''}
+    ${m.fecha ? `<div class="bmeta">📅 ${esc(m.fecha)}</div>` : ''}
+  </div>`;
+}
+
+function bracketColumn(game, matches){
+  return `<div class="bracket-round">${matches.map(m => bracketMatchBox(game, m)).join('')}</div>`;
+}
+
+// Builds a connected, mirrored bracket tree (like a classic two-sided knockout diagram).
+// Starts at whichever round has matches first (Cuartos needs 4, Semifinal needs 2, Final needs 1)
+// and pads any not-yet-played later rounds with empty "por jugar" placeholders down to the Final,
+// so the full bracket shape is visible from the start and fills in as results come in. Returns null
+// (signalling the caller to fall back to the plain list) when the counts don't fit that clean shape.
+function renderBracketTree(game, byRound){
+  const expectedByIdx = [4, 2, 1];
+  const startIdx = ROUND_ORDER.findIndex(r => (byRound[r]||[]).length > 0);
+  if(startIdx === -1) return null;
+  if((byRound[ROUND_ORDER[startIdx]]||[]).length !== expectedByIdx[startIdx]) return null;
+
+  const roundMatches = [];
+  for(let idx = startIdx; idx < ROUND_ORDER.length; idx++){
+    const expected = expectedByIdx[idx];
+    const real = byRound[ROUND_ORDER[idx]] || [];
+    if(real.length === expected) roundMatches.push(real);
+    else if(real.length === 0) roundMatches.push(new Array(expected).fill(null));
+    else return null; // partial/mismatched round — ambiguous, fall back to the plain list
+  }
+
+  const k = roundMatches.length;
+  const finalMatch = roundMatches[k-1][0];
+  const finalCol = `<div class="bracket-round bracket-final">${bracketMatchBox(game, finalMatch)}</div>`;
+  if(k === 1){
+    return `<div class="bracket bracket-k1">${finalCol}</div>`;
+  }
+
+  let leftHtml = '';
+  for(let i=0;i<k-1;i++){
+    const matches = roundMatches[i];
+    const half = matches.length/2;
+    const left = matches.slice(0, half);
+    const isLast = i === k-2; // innermost round before the Final: always 1 match per side
+    leftHtml += bracketColumn(game, left);
+    leftHtml += `<div class="bracket-connector ${isLast?'c-1to1':'c-pair'}"></div>`;
+  }
+
+  let rightHtml = '';
+  for(let i=k-2;i>=0;i--){
+    const matches = roundMatches[i];
+    const half = matches.length/2;
+    const right = matches.slice(half);
+    const isLast = i === k-2;
+    rightHtml += `<div class="bracket-connector ${isLast?'c-1to1':'c-pair'} mirror"></div>`;
+    rightHtml += bracketColumn(game, right);
+  }
+
+  return `<div class="bracket">${leftHtml}${finalCol}${rightHtml}</div>`;
 }
 
 function renderAjustes(game){
