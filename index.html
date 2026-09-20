@@ -208,7 +208,6 @@
   .pin-error{ color:var(--red); font-size:12px; font-weight:600; margin-bottom:8px; }
   .modal-actions{ display:flex; gap:8px; margin-top:6px; }
   .modal-actions .btn{ flex:1; }
-
 </style>
 </head>
 <body>
@@ -233,7 +232,29 @@
 </div>
 <div id="modalRoot"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4"></script>
 <script>
+const SUPABASE_URL = 'https://igvhdnhodxpeiybzxhjb.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlndmhkbmhvZHhwZWl5Ynp4aGpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYzNTA3MTEsImV4cCI6MjEwMTkyNjcxMX0.rbXYl8gWJnmVC4G6s8V5V6H7eywV-ZnoC4LxbMEViEM';
+let sbClient = null;
+try{
+  if(window.supabase && typeof window.supabase.createClient === 'function'){
+    sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  }
+}catch(e){ console.error('No se pudo inicializar Supabase', e); }
+
+async function dbGet(key){
+  if(!sbClient) throw new Error('La librería de Supabase no cargó (revisa tu conexión o si el proyecto está en pausa)');
+  const { data, error } = await sbClient.from('torneo_storage').select('value').eq('key', key).maybeSingle();
+  if(error) throw new Error(error.message || JSON.stringify(error));
+  return data ? data.value : null;
+}
+async function dbSet(key, value){
+  if(!sbClient) throw new Error('La librería de Supabase no cargó (revisa tu conexión o si el proyecto está en pausa)');
+  const { error } = await sbClient.from('torneo_storage').upsert({ key, value, updated_at: new Date().toISOString() });
+  if(error) throw new Error(error.message || JSON.stringify(error));
+}
+
 const ICONS = {
   domino: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
     <rect x="4" y="2.5" width="16" height="19" rx="2.4"/>
@@ -312,8 +333,8 @@ let dataLoadError = null;
 
 async function loadData(){
   try{
-    const res = await window.storage.get(STORAGE_KEY, true);
-    state = res && res.value ? JSON.parse(res.value) : defaultState();
+    const val = await dbGet(STORAGE_KEY);
+    state = val ? JSON.parse(val) : defaultState();
     dataLoadError = null;
   }catch(e){
     console.error('Error cargando', e);
@@ -332,14 +353,15 @@ async function loadData(){
 function renderErrorBanner(){
   if(!dataLoadError) return '';
   return `<div style="background:#C1272D;color:#FAF3DC;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;font-weight:600;">
-    ⚠️ No se pudo conectar con la base de datos: ${esc(dataLoadError)}
+    ⚠️ No se pudo conectar con la base de datos: ${esc(dataLoadError)}<br>
+    <span style="font-weight:400;">Comprueba tu conexión a internet o si el proyecto de Supabase está en pausa (plan gratuito) y recarga la página.</span>
   </div>`;
 }
 
 let saving = false;
 async function saveData(){
   try{
-    await window.storage.set(STORAGE_KEY, JSON.stringify(state), true);
+    await dbSet(STORAGE_KEY, JSON.stringify(state));
     dataLoadError = null;
   }catch(e){
     console.error('Error guardando', e);
@@ -349,13 +371,9 @@ async function saveData(){
 
 async function loadPinState(){
   try{
-    const res = await window.storage.get(PIN_KEY, true);
-    pinConfigured = res && res.value ? res.value : null;
+    pinConfigured = await dbGet(PIN_KEY);
   }catch(e){ pinConfigured = null; }
-  try{
-    const res2 = await window.storage.get(PIN_UNLOCKED_KEY, false);
-    unlocked = !!(res2 && res2.value === 'true');
-  }catch(e){ unlocked = false; }
+  unlocked = localStorage.getItem(PIN_UNLOCKED_KEY) === 'true';
 }
 
 function updateLockBadge(){
@@ -391,16 +409,16 @@ function showPinModal(onSuccess){
     if(!val) return;
     if(configuring){
       pinConfigured = val;
-      await window.storage.set(PIN_KEY, val, true);
+      await dbSet(PIN_KEY, val);
       unlocked = true;
-      await window.storage.set(PIN_UNLOCKED_KEY, 'true', false);
+      localStorage.setItem(PIN_UNLOCKED_KEY, 'true');
       root.innerHTML = '';
       updateLockBadge();
       render();
       if(onSuccess) onSuccess();
     } else if(val === pinConfigured){
       unlocked = true;
-      await window.storage.set(PIN_UNLOCKED_KEY, 'true', false);
+      localStorage.setItem(PIN_UNLOCKED_KEY, 'true');
       root.innerHTML = '';
       updateLockBadge();
       render();
@@ -1040,7 +1058,7 @@ document.getElementById('lockBadge').addEventListener('click', () => {
   if(unlocked){
     if(confirm('¿Bloquear la edición en este dispositivo? Habrá que volver a introducir el PIN.')){
       unlocked = false;
-      window.storage.set(PIN_UNLOCKED_KEY, 'false', false);
+      window.localStorage.setItem(PIN_UNLOCKED_KEY, 'false');
       updateLockBadge();
       render();
     }
