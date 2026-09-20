@@ -2,8 +2,8 @@ name: Keep Supabase Awake
 
 on:
   schedule:
-    # Se ejecuta cada 3 días a las 09:00 UTC, para no llegar nunca a los 7 días de inactividad que pausan el proyecto
-    - cron: '0 9 */3 * *'
+    # Se ejecuta cada 2 días a las 09:00 UTC, con margen de sobra frente a los 7 días de inactividad que pausan el proyecto
+    - cron: '0 9 */2 * *'
   workflow_dispatch: {} # permite lanzarlo manualmente desde la pestaña "Actions" de GitHub
 
 jobs:
@@ -13,6 +13,11 @@ jobs:
       - name: Ping Supabase torneo_storage table
         run: |
           curl -sS -X GET \
+            --retry 5 \
+            --retry-delay 10 \
+            --retry-all-errors \
+            --connect-timeout 15 \
+            --max-time 30 \
             "https://igvhdnhodxpeiybzxhjb.supabase.co/rest/v1/torneo_storage?select=key&limit=1" \
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}"
