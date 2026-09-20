@@ -171,13 +171,14 @@
   .bracket-round{ display:flex; flex-direction:column; justify-content:space-around; gap:8px; min-width:170px; }
   .bracket-match{
     background:var(--paper); border:2px solid var(--ink); border-radius:10px;
-    padding:8px 26px 8px 10px; font-size:12.5px; font-weight:700; position:relative;
+    padding:8px 46px 8px 10px; font-size:12.5px; font-weight:700; position:relative;
     display:flex; flex-direction:column; gap:3px; min-height:46px; justify-content:center;
     box-shadow:0 3px 8px rgba(0,0,0,.25);
   }
   .bracket-match.empty{
     color:#8b95a8; font-weight:400; font-style:italic; justify-content:center; align-items:center;
     background:rgba(250,243,220,.35); border-style:dashed; box-shadow:none; text-align:center;
+    padding:8px 10px;
   }
   .bracket-final .bracket-match{ border-color:var(--gold); border-width:3px; }
   .bside{ display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--ink); }
@@ -186,8 +187,9 @@
   .bname{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .bscore{ font-family:'IBM Plex Mono',monospace; flex:0 0 auto; }
   .bmeta{ font-size:10px; font-weight:400; color:#7c8598; }
-  .bracket-del{
-    position:absolute; top:4px; right:4px; width:18px; height:18px; font-size:10px;
+  .bracket-actions{ position:absolute; top:2px; right:2px; display:flex; gap:1px; }
+  .bracket-icn{
+    width:18px; height:18px; font-size:10px;
     padding:0; display:flex; align-items:center; justify-content:center;
   }
   .bracket-connector{ position:relative; width:22px; flex:0 0 22px; }
@@ -202,7 +204,7 @@
 
   @media (max-width:640px){
     .bracket-round{ min-width:130px; gap:6px; }
-    .bracket-match{ font-size:11px; padding:7px 22px 7px 8px; min-height:40px; }
+    .bracket-match{ font-size:11px; padding:7px 40px 7px 8px; min-height:40px; }
     .bracket-connector{ width:14px; flex:0 0 14px; }
   }
 
@@ -528,6 +530,69 @@ function showEditPairModal(game, pairId){
   };
 }
 
+function showEditMatchModal(game, kind, matchId){
+  const list = kind === 'group' ? state.games[game].groupMatches : state.games[game].koMatches;
+  const m = list.find(m => m.id === matchId);
+  if(!m) return;
+  const parchis = isParchis(game);
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `<div class="modal-overlay" id="editOverlay">
+    <div class="modal-card">
+      <h3>Editar resultado</h3>
+      <p class="modal-desc">${esc(pairName(game,m.pair1))} vs ${esc(pairName(game,m.pair2))}</p>
+      ${parchis ? `
+      <div style="text-align:left;margin-bottom:8px;">
+        <label style="font-size:11.5px;font-weight:600;color:#54607a;">Ganador</label>
+        <select id="editGanador" style="margin-top:4px;width:100%;">
+          <option value="pair1" ${m.score1>m.score2?'selected':''}>${esc(pairName(game,m.pair1))}</option>
+          <option value="pair2" ${m.score2>m.score1?'selected':''}>${esc(pairName(game,m.pair2))}</option>
+        </select>
+      </div>
+      ${kind === 'group' ? `<div style="text-align:left;margin-bottom:8px;">
+        <label style="font-size:11.5px;font-weight:600;color:#54607a;">Fichas fuera</label>
+        <input id="editFichas" type="number" min="0" value="${esc(String(m.fichasFuera||0))}" style="margin-top:4px;">
+      </div>` : ''}
+      ` : `
+      <div style="display:flex;gap:8px;margin-bottom:8px;">
+        <div style="flex:1;text-align:left;">
+          <label style="font-size:11.5px;font-weight:600;color:#54607a;">Pts ${esc(pairName(game,m.pair1))}</label>
+          <input id="editScore1" type="number" value="${esc(String(m.score1))}" style="margin-top:4px;">
+        </div>
+        <div style="flex:1;text-align:left;">
+          <label style="font-size:11.5px;font-weight:600;color:#54607a;">Pts ${esc(pairName(game,m.pair2))}</label>
+          <input id="editScore2" type="number" value="${esc(String(m.score2))}" style="margin-top:4px;">
+        </div>
+      </div>
+      `}
+      <div style="text-align:left;margin-bottom:8px;">
+        <label style="font-size:11.5px;font-weight:600;color:#54607a;">Fecha</label>
+        <input id="editFecha" type="date" value="${esc(m.fecha||'')}" style="margin-top:4px;">
+      </div>
+      <div class="modal-actions">
+        <button class="btn secondary" id="editCancel" type="button">Cancelar</button>
+        <button class="btn" id="editSave" type="button">Guardar</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('editCancel').onclick = () => { root.innerHTML = ''; };
+  document.getElementById('editSave').onclick = () => {
+    if(parchis){
+      const ganador = document.getElementById('editGanador').value;
+      m.score1 = ganador === 'pair1' ? 1 : 0;
+      m.score2 = ganador === 'pair2' ? 1 : 0;
+      if(kind === 'group') m.fichasFuera = Number(document.getElementById('editFichas').value)||0;
+    } else {
+      m.score1 = Number(document.getElementById('editScore1').value);
+      m.score2 = Number(document.getElementById('editScore2').value);
+    }
+    m.fecha = document.getElementById('editFecha').value.trim();
+    m.played = true;
+    root.innerHTML = '';
+    saveData();
+    render();
+  };
+}
+
 function pairName(game, id){
   const p = state.games[game].pairs.find(p => p.id === id);
   return pairDisplayName(p);
@@ -791,6 +856,7 @@ function renderGroups(game){
         <div class="matchrow">
           <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}<span class="win">🏆 ${esc(pairName(game, m.score1>m.score2?m.pair1:m.pair2))}</span> gana a ${esc(pairName(game, m.score1>m.score2?m.pair2:m.pair1))}</span>
           <span class="score">+${m.fichasFuera||0} fichas</span>
+          <button class="iconbtn" data-action="edit-groupmatch" data-game="${game}" data-id="${m.id}">✏️</button>
           <button class="iconbtn" data-action="delete-groupmatch" data-game="${game}" data-id="${m.id}">✕</button>
         </div>` : `
         <div class="matchrow">
@@ -798,6 +864,7 @@ function renderGroups(game){
             vs
             ${m.score2>m.score1?'<span class=\"win\">':''}${esc(pairName(game,m.pair2))}${m.score2>m.score1?'</span>':''}</span>
           <span class="score">${m.score1} – ${m.score2}</span>
+          <button class="iconbtn" data-action="edit-groupmatch" data-game="${game}" data-id="${m.id}">✏️</button>
           <button class="iconbtn" data-action="delete-groupmatch" data-game="${game}" data-id="${m.id}">✕</button>
         </div>`).join('') + `</div>`;
     }
@@ -855,38 +922,39 @@ function renderKnockout(game){
   const byRound = {};
   g.koMatches.forEach(m => { (byRound[m.ronda] = byRound[m.ronda] || []).push(m); });
   const roundsPresent = ROUND_ORDER.filter(r => byRound[r] && byRound[r].length);
-  if(roundsPresent.length === 0){
+  const defaultStartIdx = assignedPairs.length >= 8 ? 0 : (assignedPairs.length >= 4 ? 1 : 2);
+  const bracketHtml = renderBracketTree(game, byRound, defaultStartIdx);
+  if(bracketHtml){
+    html += `<div class="card bracket-card"><div class="bracket-scroll">${bracketHtml}</div></div>`;
+  } else if(roundsPresent.length === 0){
     html += `<div class="card"><div class="empty">Todavía no hay cruces registrados.</div></div>`;
   } else {
-    const bracketHtml = renderBracketTree(game, byRound);
-    if(bracketHtml){
-      html += `<div class="card bracket-card"><div class="bracket-scroll">${bracketHtml}</div></div>`;
-    } else {
-      html += `<div class="card">`;
-      roundsPresent.forEach(r => {
-        html += `<div class="ko-round"><h4>${r}</h4><div class="matchlist">`;
-        byRound[r].forEach(m => {
-          if(parchis){
-            const winner = m.score1>m.score2 ? m.pair1 : m.pair2;
-            const loser = m.score1>m.score2 ? m.pair2 : m.pair1;
-            html += `<div class="matchrow">
-              <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}<span class="win">🏆 ${esc(pairName(game,winner))}</span> gana a ${esc(pairName(game,loser))}</span>
-              <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
-            </div>`;
-          } else {
-            html += `<div class="matchrow">
-              <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}${m.score1>m.score2?'<span class=\"win\">':''}${esc(pairName(game,m.pair1))}${m.score1>m.score2?'</span>':''}
-                vs
-                ${m.score2>m.score1?'<span class=\"win\">':''}${esc(pairName(game,m.pair2))}${m.score2>m.score1?'</span>':''}</span>
-              <span class="score">${m.score1} – ${m.score2}</span>
-              <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
-            </div>`;
-          }
-        });
-        html += `</div></div>`;
+    html += `<div class="card">`;
+    roundsPresent.forEach(r => {
+      html += `<div class="ko-round"><h4>${r}</h4><div class="matchlist">`;
+      byRound[r].forEach(m => {
+        if(parchis){
+          const winner = m.score1>m.score2 ? m.pair1 : m.pair2;
+          const loser = m.score1>m.score2 ? m.pair2 : m.pair1;
+          html += `<div class="matchrow">
+            <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}<span class="win">🏆 ${esc(pairName(game,winner))}</span> gana a ${esc(pairName(game,loser))}</span>
+            <button class="iconbtn" data-action="edit-komatch" data-game="${game}" data-id="${m.id}">✏️</button>
+            <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
+          </div>`;
+        } else {
+          html += `<div class="matchrow">
+            <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}${m.score1>m.score2?'<span class=\"win\">':''}${esc(pairName(game,m.pair1))}${m.score1>m.score2?'</span>':''}
+              vs
+              ${m.score2>m.score1?'<span class=\"win\">':''}${esc(pairName(game,m.pair2))}${m.score2>m.score1?'</span>':''}</span>
+            <span class="score">${m.score1} – ${m.score2}</span>
+            <button class="iconbtn" data-action="edit-komatch" data-game="${game}" data-id="${m.id}">✏️</button>
+            <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
+          </div>`;
+        }
       });
-      html += `</div>`;
-    }
+      html += `</div></div>`;
+    });
+    html += `</div>`;
   }
   return html;
 }
@@ -897,7 +965,10 @@ function bracketMatchBox(game, m){
   const p1win = m.score1 > m.score2;
   const p2win = m.score2 > m.score1;
   return `<div class="bracket-match">
-    <button class="iconbtn bracket-del" data-action="delete-komatch" data-game="${game}" data-id="${m.id}" title="Eliminar">✕</button>
+    <div class="bracket-actions">
+      <button class="iconbtn bracket-icn" data-action="edit-komatch" data-game="${game}" data-id="${m.id}" title="Editar">✏️</button>
+      <button class="iconbtn bracket-icn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}" title="Eliminar">✕</button>
+    </div>
     <div class="bside ${p1win?'win':''}"><span class="bname">${esc(pairName(game,m.pair1))}</span>${parchis?'':`<span class="bscore">${m.score1}</span>`}</div>
     <div class="bside ${p2win?'win':''}"><span class="bname">${esc(pairName(game,m.pair2))}</span>${parchis?'':`<span class="bscore">${m.score2}</span>`}</div>
     ${parchis && m.fichasFuera!=null ? `<div class="bmeta">🏆 +${m.fichasFuera} fichas</div>` : ''}
@@ -910,15 +981,18 @@ function bracketColumn(game, matches){
 }
 
 // Builds a connected, mirrored bracket tree (like a classic two-sided knockout diagram).
-// Starts at whichever round has matches first (Cuartos needs 4, Semifinal needs 2, Final needs 1)
-// and pads any not-yet-played later rounds with empty "por jugar" placeholders down to the Final,
-// so the full bracket shape is visible from the start and fills in as results come in. Returns null
-// (signalling the caller to fall back to the plain list) when the counts don't fit that clean shape.
-function renderBracketTree(game, byRound){
+// Starts at defaultStartIdx (sized from how many pairs are assigned: 0=Cuartos for 8+, 1=Semifinal
+// for 4-7, 2=Final for 2-3) — or earlier, if real matches already exist in an earlier round — and
+// pads any not-yet-played rounds with empty "por jugar" placeholders down to the Final, so the full
+// bracket shape is visible from the very start and fills in as results come in. Returns null
+// (signalling the caller to fall back to the plain list) when real match counts don't fit that shape.
+function renderBracketTree(game, byRound, defaultStartIdx){
   const expectedByIdx = [4, 2, 1];
-  const startIdx = ROUND_ORDER.findIndex(r => (byRound[r]||[]).length > 0);
-  if(startIdx === -1) return null;
-  if((byRound[ROUND_ORDER[startIdx]]||[]).length !== expectedByIdx[startIdx]) return null;
+  const realStartIdx = ROUND_ORDER.findIndex(r => (byRound[r]||[]).length > 0);
+  const startIdx = realStartIdx === -1 ? defaultStartIdx : Math.min(defaultStartIdx, realStartIdx);
+  if(startIdx == null || startIdx < 0) return null;
+  const firstReal = byRound[ROUND_ORDER[startIdx]] || [];
+  if(firstReal.length !== 0 && firstReal.length !== expectedByIdx[startIdx]) return null;
 
   const roundMatches = [];
   for(let idx = startIdx; idx < ROUND_ORDER.length; idx++){
@@ -1047,6 +1121,22 @@ document.addEventListener('click', e => {
   if(editPair){
     const { game, id } = editPair.dataset;
     const run = () => showEditPairModal(game, id);
+    unlocked ? run() : showPinModal(run);
+    return;
+  }
+
+  const editGm = e.target.closest('[data-action="edit-groupmatch"]');
+  if(editGm){
+    const { game, id } = editGm.dataset;
+    const run = () => showEditMatchModal(game, 'group', id);
+    unlocked ? run() : showPinModal(run);
+    return;
+  }
+
+  const editKo = e.target.closest('[data-action="edit-komatch"]');
+  if(editKo){
+    const { game, id } = editKo.dataset;
+    const run = () => showEditMatchModal(game, 'ko', id);
     unlocked ? run() : showPinModal(run);
     return;
   }
