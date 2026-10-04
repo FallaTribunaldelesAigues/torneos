@@ -252,6 +252,7 @@
   .pin-error{ color:var(--red); font-size:12px; font-weight:600; margin-bottom:8px; }
   .modal-actions{ display:flex; gap:8px; margin-top:6px; }
   .modal-actions .btn{ flex:1; }
+
 </style>
 </head>
 <body>
@@ -276,29 +277,7 @@
 </div>
 <div id="modalRoot"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4"></script>
 <script>
-const SUPABASE_URL = 'https://igvhdnhodxpeiybzxhjb.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlndmhkbmhvZHhwZWl5Ynp4aGpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYzNTA3MTEsImV4cCI6MjEwMTkyNjcxMX0.rbXYl8gWJnmVC4G6s8V5V6H7eywV-ZnoC4LxbMEViEM';
-let sbClient = null;
-try{
-  if(window.supabase && typeof window.supabase.createClient === 'function'){
-    sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-  }
-}catch(e){ console.error('No se pudo inicializar Supabase', e); }
-
-async function dbGet(key){
-  if(!sbClient) throw new Error('La librería de Supabase no cargó (revisa tu conexión o si el proyecto está en pausa)');
-  const { data, error } = await sbClient.from('torneo_storage').select('value').eq('key', key).maybeSingle();
-  if(error) throw new Error(error.message || JSON.stringify(error));
-  return data ? data.value : null;
-}
-async function dbSet(key, value){
-  if(!sbClient) throw new Error('La librería de Supabase no cargó (revisa tu conexión o si el proyecto está en pausa)');
-  const { error } = await sbClient.from('torneo_storage').upsert({ key, value, updated_at: new Date().toISOString() });
-  if(error) throw new Error(error.message || JSON.stringify(error));
-}
-
 const ICONS = {
   domino: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
     <rect x="4" y="2.5" width="16" height="19" rx="2.4"/>
@@ -383,8 +362,8 @@ let dataLoadError = null;
 
 async function loadData(){
   try{
-    const val = await dbGet(STORAGE_KEY);
-    state = val ? JSON.parse(val) : defaultState();
+    const res = await window.storage.get(STORAGE_KEY, true);
+    state = res && res.value ? JSON.parse(res.value) : defaultState();
     dataLoadError = null;
   }catch(e){
     console.error('Error cargando', e);
@@ -403,15 +382,14 @@ async function loadData(){
 function renderErrorBanner(){
   if(!dataLoadError) return '';
   return `<div style="background:#C1272D;color:#FAF3DC;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;font-weight:600;">
-    ⚠️ No se pudo conectar con la base de datos: ${esc(dataLoadError)}<br>
-    <span style="font-weight:400;">Comprueba tu conexión a internet o si el proyecto de Supabase está en pausa (plan gratuito) y recarga la página.</span>
+    ⚠️ No se pudo conectar con la base de datos: ${esc(dataLoadError)}
   </div>`;
 }
 
 let saving = false;
 async function saveData(){
   try{
-    await dbSet(STORAGE_KEY, JSON.stringify(state));
+    await window.storage.set(STORAGE_KEY, JSON.stringify(state), true);
     dataLoadError = null;
   }catch(e){
     console.error('Error guardando', e);
@@ -421,9 +399,13 @@ async function saveData(){
 
 async function loadPinState(){
   try{
-    pinConfigured = await dbGet(PIN_KEY);
+    const res = await window.storage.get(PIN_KEY, true);
+    pinConfigured = res && res.value ? res.value : null;
   }catch(e){ pinConfigured = null; }
-  unlocked = localStorage.getItem(PIN_UNLOCKED_KEY) === 'true';
+  try{
+    const res2 = await window.storage.get(PIN_UNLOCKED_KEY, false);
+    unlocked = !!(res2 && res2.value === 'true');
+  }catch(e){ unlocked = false; }
 }
 
 function updateLockBadge(){
@@ -459,16 +441,16 @@ function showPinModal(onSuccess){
     if(!val) return;
     if(configuring){
       pinConfigured = val;
-      await dbSet(PIN_KEY, val);
+      await window.storage.set(PIN_KEY, val, true);
       unlocked = true;
-      localStorage.setItem(PIN_UNLOCKED_KEY, 'true');
+      await window.storage.set(PIN_UNLOCKED_KEY, 'true', false);
       root.innerHTML = '';
       updateLockBadge();
       render();
       if(onSuccess) onSuccess();
     } else if(val === pinConfigured){
       unlocked = true;
-      localStorage.setItem(PIN_UNLOCKED_KEY, 'true');
+      await window.storage.set(PIN_UNLOCKED_KEY, 'true', false);
       root.innerHTML = '';
       updateLockBadge();
       render();
@@ -624,6 +606,60 @@ function computeStandings(game, grupo){
   return Object.values(stats).sort((a,b) => (b.g - a.g) || ((b.pf-b.pc) - (a.pf-a.pc)) || (b.pf - a.pf));
 }
 
+function computeGlobalStandings(game){
+  const g = state.games[game];
+  const pairs = g.pairs.filter(p => p.grupo);
+  const stats = {};
+  pairs.forEach(p => stats[p.id] = { id:p.id, nombre:pairDisplayName(p), grupo:p.grupo, pj:0, g:0, pf:0, pc:0 });
+  const parchis = isParchis(game);
+  g.groupMatches.filter(m => m.played).forEach(m => {
+    if(!stats[m.pair1] || !stats[m.pair2]) return;
+    stats[m.pair1].pj++; stats[m.pair2].pj++;
+    if(parchis){
+      const fichas = Number(m.fichasFuera)||0;
+      if(m.score1 > m.score2){ stats[m.pair1].g++; stats[m.pair1].pf += fichas; stats[m.pair2].pc += fichas; }
+      else if(m.score2 > m.score1){ stats[m.pair2].g++; stats[m.pair2].pf += fichas; stats[m.pair1].pc += fichas; }
+    } else {
+      stats[m.pair1].pf += m.score1; stats[m.pair1].pc += m.score2;
+      stats[m.pair2].pf += m.score2; stats[m.pair2].pc += m.score1;
+      if(m.score1 > m.score2) stats[m.pair1].g++;
+      else if(m.score2 > m.score1) stats[m.pair2].g++;
+    }
+  });
+  if(parchis){
+    return Object.values(stats).sort((a,b) => (b.g - a.g) || (b.pf - a.pf));
+  }
+  return Object.values(stats).sort((a,b) => (b.g - a.g) || ((b.pf-b.pc) - (a.pf-a.pc)) || (b.pf - a.pf));
+}
+
+function groupsAllPlayed(game){
+  const g = state.games[game];
+  if(!g.groups || g.groups.length === 0) return false;
+  return g.groups.every(gr => {
+    const pairsInGroup = g.pairs.filter(p => p.grupo === gr);
+    if(pairsInGroup.length < 2) return false;
+    const totalPosible = pairsInGroup.length * (pairsInGroup.length - 1) / 2;
+    const playedCount = g.groupMatches.filter(m => m.grupo === gr && m.played).length;
+    return playedCount >= totalPosible;
+  });
+}
+
+function getGroupsChampion(game){
+  if(!groupsAllPlayed(game)) return null;
+  const standings = computeGlobalStandings(game);
+  if(standings.length === 0) return null;
+  const top = standings[0];
+  if(standings.length > 1){
+    const second = standings[1];
+    const parchis = isParchis(game);
+    const tie = parchis
+      ? (top.g === second.g && top.pf === second.pf)
+      : (top.g === second.g && (top.pf-top.pc) === (second.pf-second.pc) && top.pf === second.pf);
+    if(tie) return null;
+  }
+  return top.nombre;
+}
+
 function render(){
   renderBunting();
   const app = document.getElementById('app');
@@ -672,6 +708,9 @@ function renderHome(){
 }
 
 function getChampion(game){
+  const s = state.games[game].settings || {};
+  const formato = s.formato || 'grupos_eliminatoria';
+  if(formato === 'grupos') return getGroupsChampion(game);
   const final = state.games[game].koMatches.find(m => m.ronda === 'Final' && m.played);
   if(!final) return null;
   if(final.score1 === final.score2) return null;
@@ -794,6 +833,22 @@ function renderGroups(game){
   let html = '';
   if(g.pairs.length === 0){
     return `<div class="card"><div class="empty">Añade ${individual?'jugadores':'parejas'} primero en la pestaña «${individual?'Jugadores':'Parejas'}» para poder registrar resultados de grupo.</div></div>`;
+  }
+  if(g.groups.length > 1){
+    const globalStandings = computeGlobalStandings(game);
+    if(globalStandings.length){
+      const parchis = isParchis(game);
+      const champ = getChampion(game);
+      html += `<div class="card"><h2>🏆 Clasificación general (todos los grupos)</h2>
+      <table class="standings"><thead><tr>
+        <th>${individual?'Jugador':'Pareja'}</th><th>Grupo</th><th>PJ</th><th>G</th>${parchis ? '<th>Fichas fuera</th>' : '<th>PF</th><th>PC</th><th>Dif</th>'}
+      </tr></thead><tbody>` + globalStandings.map((s,i) => parchis
+        ? `<tr>${i===0?'<td>🥇 '+esc(s.nombre)+'</td>':'<td>'+esc(s.nombre)+'</td>'}<td>${esc(s.grupo)}</td><td>${s.pj}</td><td>${s.g}</td><td>${s.pf}</td></tr>`
+        : `<tr>${i===0?'<td>🥇 '+esc(s.nombre)+'</td>':'<td>'+esc(s.nombre)+'</td>'}<td>${esc(s.grupo)}</td><td>${s.pj}</td><td>${s.g}</td><td>${s.pf}</td><td>${s.pc}</td><td>${s.pf-s.pc>0?'+':''}${s.pf-s.pc}</td></tr>`
+      ).join('') + `</tbody></table>
+      <div class="note" style="margin-top:8px;">${champ ? `🏆 <strong>${esc(champ)}</strong> es ${individual?'el ganador':'la pareja ganadora'} del torneo con la mejor puntuación global.` : 'Suma los puntos de todas las partidas jugadas por cada '+(individual?'jugador':'pareja')+' en su grupo. Cuando se completen todos los partidos de todos los grupos, el primero de esta tabla será el ganador del torneo.'}</div>
+      </div>`;
+    }
   }
   g.groups.forEach(gr => {
     const pairsInGroup = g.pairs.filter(p => p.grupo === gr);
@@ -1288,7 +1343,7 @@ document.getElementById('lockBadge').addEventListener('click', () => {
   if(unlocked){
     if(confirm('¿Bloquear la edición en este dispositivo? Habrá que volver a introducir el PIN.')){
       unlocked = false;
-      window.localStorage.setItem(PIN_UNLOCKED_KEY, 'false');
+      window.storage.set(PIN_UNLOCKED_KEY, 'false', false);
       updateLockBadge();
       render();
     }
