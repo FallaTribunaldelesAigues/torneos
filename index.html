@@ -351,6 +351,10 @@ function uid(){ return Math.random().toString(36).slice(2,9); }
 function esc(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function isIndividual(game){ return game === 'chinchon'; }
+function unitCount(game, n){
+  const u = isIndividual(game) ? (n === 1 ? 'jugador' : 'jugadores') : (n === 1 ? 'pareja' : 'parejas');
+  return `${n} ${u}`;
+}
 
 function pairDisplayName(p){
   if(!p) return '—';
@@ -848,8 +852,7 @@ function renderHome(){
   Object.entries(GAMES).forEach(([key,meta]) => {
     const g = state.games[key];
     const champ = getChampion(key);
-    const unidad = isIndividual(key) ? 'jugador' : 'pareja';
-    const status = champ ? `🏆 ${esc(champ)}` : `${g.pairs.length} ${unidad}${g.pairs.length===1?'':'s'}`;
+    const status = champ ? `🏆 ${esc(champ)}` : unitCount(key, g.pairs.length);
     html += `<button class="homebtn" data-tab="${key}">
       <span class="bigdot" style="background:${meta.color}">${meta.icon}</span>
       <span class="gname">${meta.name}</span>
@@ -872,7 +875,7 @@ function renderResumen(){
       <div class="dot" style="background:${meta.color}">${meta.icon}</div>
       <div class="info">
         <div class="g">${meta.name}</div>
-        <div class="s">${g.pairs.length} ${isIndividual(key)?'jugador':'pareja'}${g.pairs.length===1?'':'s'} inscrit${isIndividual(key)?'o':'a'}${g.pairs.length===1?'':'s'}</div>
+        <div class="s">${unitCount(key, g.pairs.length)} inscrit${isIndividual(key)?'o':'a'}${g.pairs.length===1?'':'s'}</div>
       </div>
       <div class="champ">
         ${champ ? `<span class="tag">${isIndividual(key)?'Campeón':'Campeones'}</span>🏆 ${esc(champ)}` : `<span class="tag">Estado</span>En juego`}
