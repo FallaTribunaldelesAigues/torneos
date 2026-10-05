@@ -565,13 +565,15 @@ function showEditMesaModal(game, rondaId, mesaId){
     }
     const antes = ronda.mesas.map(m => m.jugadores.slice());
     const js = ronda.mesas.map(m => m.jugadores.slice());
+    const desc = (ronda.descansa || []).slice();
+    const lists = js.concat([desc]);
     const mi = ronda.mesas.indexOf(mesa);
     nuevos.forEach((x, i) => {
       const actual = js[mi][i];
       if(actual === x) return;
-      for(let a = 0; a < js.length; a++){
-        const j = js[a].indexOf(x);
-        if(j !== -1){ js[a][j] = actual; break; }
+      for(let a = 0; a < lists.length; a++){
+        const j = lists[a].indexOf(x);
+        if(j !== -1){ lists[a][j] = actual; break; }
       }
       js[mi][i] = x;
     });
@@ -579,10 +581,11 @@ function showEditMesaModal(game, rondaId, mesaId){
     const afectadas = ronda.mesas.filter((m, a) => cambiada(a));
     if(afectadas.length === 0){ root.innerHTML = ''; return; }
     if(afectadas.some(m => m.jugada) && !confirm('Se borrará el resultado de las mesas afectadas. ¿Continuar?')) return;
+    ronda.descansa = desc;
     ronda.mesas.forEach((m, a) => {
       const cambia = cambiada(a);
       m.jugadores = js[a];
-      if(cambia){ m.jugada = false; m.ganadorId = null; m.puntos = null; }
+      if(cambia){ m.jugada = false; m.ganadorId = null; m.puntos = null; m.camas = null; }
     });
     root.innerHTML = '';
     saveData();
@@ -611,7 +614,11 @@ function tableSize(game){ return isIndividual(game) ? 4 : 2; }
 
 // Genera todas las rondas de golpe: R rondas con mesas de k, minimizando repeticiones de rivales
 function generateSchedule(ids, R, k){
-  const n = ids.length, T = n / k;
+  // Si sobra gente para completar mesas de k (parejas impares) se añade un hueco vacío:
+  // quien comparte mesa con el hueco descansa esa ronda.
+  const pad = (k - ids.length % k) % k;
+  const slots = ids.concat(new Array(pad).fill(null));
+  const n = slots.length, T = n / k;
   const tablePairs = k * (k-1) / 2;
   const cnt = Array.from({length:n}, () => new Array(n).fill(0));
   const tableOf = p => Math.floor(p / k);
@@ -665,31 +672,54 @@ function generateSchedule(ids, R, k){
     }
   }
   return bestRounds.map(perm => {
-    const tables = [];
+    const mesas = [], descansa = [];
     for(let t = 0; t < T; t++){
-      const mesa = [];
-      for(let i = 0; i < k; i++) mesa.push(ids[perm[t*k+i]]);
-      tables.push(mesa);
+      const reales = [];
+      for(let i = 0; i < k; i++){ const v = slots[perm[t*k+i]]; if(v !== null) reales.push(v); }
+      if(reales.length === k) mesas.push(reales);
+      else reales.forEach(v => descansa.push(v));
     }
-    return tables;
+    return { mesas, descansa };
   });
+}
+
+// Criterio de desempate (tras las victorias) según el torneo:
+//  truc: diferencia de camas y luego camas ganadas · parchís: más fichas rivales dejadas fuera
+//  dominó y chinchón: menos puntos en las partidas ganadas
+function desempate(game, s){
+  if(game === 'truc') return [s.cf - s.cc, s.cf];
+  if(game === 'parchis') return [s.fuera];
+  return [-s.puntos];
+}
+function cmpStats(game, a, b){
+  if(b.g !== a.g) return b.g - a.g;
+  const da = desempate(game, a), db = desempate(game, b);
+  for(let i = 0; i < da.length; i++) if(db[i] !== da[i]) return db[i] - da[i];
+  return 0;
 }
 
 function computeStandings(game){
   const g = state.games[game];
   const stats = {};
-  g.pairs.forEach(p => stats[p.id] = { id:p.id, nombre:pairDisplayName(p), pj:0, g:0, puntos:0 });
+  g.pairs.forEach(p => stats[p.id] = { id:p.id, nombre:pairDisplayName(p), pj:0, g:0, puntos:0, fuera:0, cf:0, cc:0 });
   (g.rondas||[]).forEach(ronda => {
     ronda.mesas.forEach(mesa => {
       if(!mesa.jugada) return;
       mesa.jugadores.forEach(pid => { if(stats[pid]) stats[pid].pj++; });
+      if(game === 'truc' && mesa.camas){
+        mesa.jugadores.forEach(pid => {
+          const otro = mesa.jugadores.find(x => x !== pid);
+          if(stats[pid]){ stats[pid].cf += Number(mesa.camas[pid])||0; stats[pid].cc += Number(mesa.camas[otro])||0; }
+        });
+      }
       if(mesa.ganadorId && stats[mesa.ganadorId]){
         stats[mesa.ganadorId].g++;
-        stats[mesa.ganadorId].puntos += Number(mesa.puntos)||0;
+        if(game === 'parchis') stats[mesa.ganadorId].fuera += Number(mesa.puntos)||0;
+        else if(game !== 'truc') stats[mesa.ganadorId].puntos += Number(mesa.puntos)||0;
       }
     });
   });
-  return Object.values(stats).sort((a,b) => (b.g - a.g) || (a.puntos - b.puntos));
+  return Object.values(stats).sort((a,b) => cmpStats(game, a, b));
 }
 
 // Cuántos enfrentamientos distintos (quién ha coincidido en mesa con quién) cubre el sorteo
@@ -718,7 +748,7 @@ function getChampion(game){
   if(!rondas.every(r => r.mesas.every(m => m.jugada))) return null;
   const st = computeStandings(game);
   if(!st.length || st[0].g === 0) return null;
-  if(st.length > 1 && st[0].g === st[1].g && st[0].puntos === st[1].puntos) return null;
+  if(st.length > 1 && cmpStats(game, st[0], st[1]) === 0) return null;
   return st[0].nombre;
 }
 
@@ -735,32 +765,39 @@ function renderMesas(game){
   let html = '';
   const standings = computeStandings(game);
   html += `<div class="card"><h2>🏆 Clasificación general</h2>
-  <table class="standings"><thead><tr><th>${individual?'Jugador':'Pareja'}</th><th>Mesas</th><th>Victorias</th><th>Puntos</th></tr></thead><tbody>` +
-  standings.map((s,i) => `<tr><td>${i===0 && s.g>0 ? '🥇 ' : ''}${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td><td>${s.puntos}</td></tr>`).join('') +
+  <table class="standings"><thead><tr><th>${individual?'Jugador':'Pareja'}</th><th>Mesas</th><th>Victorias</th>${game==='truc' ? '<th>Camas +</th><th>Camas −</th>' : game==='parchis' ? '<th>Fichas rivales fuera</th>' : '<th>Puntos</th>'}</tr></thead><tbody>` +
+  standings.map((s,i) => `<tr><td>${i===0 && s.g>0 ? '🥇 ' : ''}${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td>${game==='truc' ? `<td>${s.cf}</td><td>${s.cc}</td>` : game==='parchis' ? `<td>${s.fuera}</td>` : `<td>${s.puntos}</td>`}</tr>`).join('') +
   `</tbody></table>
-  <div class="note" style="margin-top:8px;">Gana quien más partidas haya ganado. En caso de empate a victorias, gana quien menos puntos acumule en las partidas ganadas.</div>
+  <div class="note" style="margin-top:8px;">${
+    game==='truc' ? 'Gana quien más partidas haya ganado (una partida termina cuando una pareja llega a 2 camas). En caso de empate, gana la mejor diferencia de camas (ganadas − perdidas) y después quien más camas haya ganado.'
+    : game==='parchis' ? 'Gana quien más partidas haya ganado. En caso de empate a victorias, gana quien haya dejado más fichas del equipo rival sin meter en las partidas ganadas.'
+    : 'Gana quien más partidas haya ganado. En caso de empate a victorias, gana quien menos puntos acumule en las partidas ganadas.'}</div>
   </div>`;
 
   const n = g.pairs.length;
   const hayRondas = g.rondas.length > 0;
   html += `<div class="card"><h2>🎲 Mesas</h2>
-  <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">${individual ? 'Cada partida es de 4 jugadores.' : 'Cada partida enfrenta a dos parejas.'} El sorteo reparte de una vez todas las rondas, rotando las mesas para que se enfrenten entre todos y se repitan lo menos posible. Cada ronda tiene su propia fecha.</p>
+  <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">${individual ? 'Cada partida es de 4 jugadores.' : 'Cada partida enfrenta a dos parejas. Si el número de parejas es impar, en cada ronda descansa una.'} El sorteo reparte de una vez todas las rondas, rotando las mesas para que se enfrenten entre todos y se repitan lo menos posible. Cada ronda tiene su propia fecha.</p>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
     <label style="font-size:12.5px;">Rondas <input type="number" id="rondasInput" value="${hayRondas ? g.rondas.length : 9}" min="1" max="30" style="width:70px;"></label>
     <button class="btn" data-action="sorteo" data-game="${game}">🎲 ${hayRondas ? 'Repetir sorteo' : 'Sorteo de todas las rondas'}</button>
     ${hayRondas ? `<button class="btn secondary" data-action="borrar-sorteo" data-game="${game}">🗑 Borrar sorteo</button>` : ''}
   </div>`;
-  if(n < k || n % k !== 0){
-    html += `<p class="empty" style="margin-top:10px;">${individual ? `El número de jugadores apuntados (${n}) tiene que ser múltiplo de 4 para repartir mesas completas.` : `El número de parejas apuntadas (${n}) tiene que ser par (mínimo 2) para repartir las mesas.`}</p>`;
+  const invalido = individual ? (n < 4 || n % 4 !== 0) : n < 2;
+  if(!individual && !invalido && n % 2 === 1){
+    html += `<p class="note" style="margin-top:10px;">😴 Hay ${n} parejas (número impar): en cada ronda descansa una, y el descanso se reparte entre todas. Para que todas se enfrenten entre sí hacen falta ${n} rondas.</p>`;
+  }
+  if(invalido){
+    html += `<p class="empty" style="margin-top:10px;">${individual ? `El número de jugadores apuntados (${n}) tiene que ser múltiplo de 4 para repartir mesas completas.` : 'Necesitas al menos 2 parejas apuntadas para repartir las mesas.'}</p>`;
   } else if(hayRondas){
     const cov = computeCoverage(game);
     if(cov.covered >= cov.total){
       html += `<p class="note" style="margin-top:10px;">✅ Con estas ${g.rondas.length} rondas todos se enfrentan con todos al menos una vez.</p>`;
     } else {
-      html += `<p class="note" style="margin-top:10px;">⚠️ Con ${g.rondas.length} rondas quedan ${cov.total - cov.covered} enfrentamientos sin cubrir (de ${cov.total}). ${individual ? 'Prueba con más rondas.' : `Para que todas las parejas se enfrenten entre sí hacen falta al menos ${n-1} rondas.`}</p>`;
+      html += `<p class="note" style="margin-top:10px;">⚠️ Con ${g.rondas.length} rondas quedan ${cov.total - cov.covered} enfrentamientos sin cubrir (de ${cov.total}). ${individual ? 'Prueba con más rondas.' : `Para que todas las parejas se enfrenten entre sí hacen falta al menos ${n % 2 === 0 ? n-1 : n} rondas.`}</p>`;
     }
     const enSorteo = new Set();
-    g.rondas.forEach(r => r.mesas.forEach(m => m.jugadores.forEach(id => enSorteo.add(id))));
+    g.rondas.forEach(r => { r.mesas.forEach(m => m.jugadores.forEach(id => enSorteo.add(id))); (r.descansa||[]).forEach(id => enSorteo.add(id)); });
     const fuera = g.pairs.filter(p => !enSorteo.has(p.id)).length;
     if(fuera){
       html += `<p class="note" style="margin-top:6px;">⚠️ Hay ${fuera} inscripci${fuera===1?'ón posterior':'ones posteriores'} al sorteo que no ${fuera===1?'está':'están'} en ninguna mesa. Repite el sorteo para incluir${fuera===1?'la':'las'}.</p>`;
@@ -785,6 +822,9 @@ function renderMesas(game){
           <button class="iconbtn" data-action="delete-ronda" data-game="${game}" data-id="${ronda.id}" title="Eliminar esta ronda">🗑</button>
         </div>
       </div>`;
+    if((ronda.descansa||[]).length){
+      html += `<div class="note" style="margin:2px 0 4px;">😴 Descansa: <strong>${ronda.descansa.map(id => esc(pairName(game, id))).join(', ')}</strong></div>`;
+    }
     ronda.mesas.forEach(mesa => {
       const nombres = mesa.jugadores.map(pid => pairName(game, pid));
       const editando = editingMesa === mesa.id;
@@ -798,16 +838,40 @@ function renderMesas(game){
         </div>
         <div class="names" style="margin:6px 0;">${nombres.map(esc).join(individual ? ' · ' : ' vs ')}</div>`;
       if(mesa.jugada && !editando){
-        html += `<div class="score"><span class="win">🏆 ${esc(pairName(game, mesa.ganadorId))}</span> gana con ${esc(String(mesa.puntos))} puntos</div>`;
+        const nom = pid => esc(pairName(game, pid));
+        if(game === 'truc'){
+          const cm = mesa.camas || {};
+          html += `<div class="score"><span class="win">🏆 ${nom(mesa.ganadorId)}</span> gana · camas: ${mesa.jugadores.map(pid => `${nom(pid)} <strong>${Number(cm[pid])||0}</strong>`).join(' — ')}</div>`;
+        } else if(game === 'parchis'){
+          html += `<div class="score"><span class="win">🏆 ${nom(mesa.ganadorId)}</span> gana · deja ${esc(String(mesa.puntos))} ${Number(mesa.puntos) === 1 ? 'ficha rival fuera' : 'fichas rivales fuera'}</div>`;
+        } else {
+          html += `<div class="score"><span class="win">🏆 ${nom(mesa.ganadorId)}</span> gana con ${esc(String(mesa.puntos))} puntos</div>`;
+        }
       } else {
         const options = mesa.jugadores.map(pid => `<option value="${pid}" ${mesa.ganadorId === pid ? 'selected' : ''}>${esc(pairName(game, pid))}</option>`).join('');
         const puntosVal = (mesa.jugada && mesa.puntos !== null && mesa.puntos !== undefined) ? esc(String(mesa.puntos)) : '';
-        html += `<form data-action="mesa-resultado" data-game="${game}" data-ronda="${ronda.id}" data-id="${mesa.id}" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;">
-          <select name="ganador" required>${options}</select>
-          <input type="number" name="puntos" placeholder="Puntos" min="0" value="${puntosVal}" style="width:90px;" required>
-          <button class="btn small" type="submit">Guardar resultado</button>
-          ${editando ? `<button class="btn secondary small" type="button" data-action="cancel-edit-mesa">Cancelar</button>` : ''}
-        </form>`;
+        const cancel = editando ? `<button class="btn secondary small" type="button" data-action="cancel-edit-mesa">Cancelar</button>` : '';
+        const lbl = 'font-size:11.5px;font-weight:600;color:#54607a;';
+        const formAttrs = `data-action="mesa-resultado" data-game="${game}" data-ronda="${ronda.id}" data-id="${mesa.id}" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:6px;"`;
+        if(game === 'truc'){
+          const cm = mesa.camas || {};
+          html += `<form ${formAttrs}>
+            ${mesa.jugadores.map((pid, i) => `<label style="${lbl}">🛏 Camas · ${esc(pairName(game, pid))}<br><input type="number" name="camas${i}" min="0" max="2" placeholder="0-2" value="${mesa.jugada && cm[pid] !== undefined ? esc(String(cm[pid])) : ''}" style="width:90px;margin-top:4px;" required></label>`).join('')}
+            <button class="btn small" type="submit">Guardar resultado</button>
+            ${cancel}
+          </form>
+          <div class="note" style="margin-top:4px;">La partida termina cuando una pareja llega a 2 camas (2-0 o 2-1). La pareja ganadora se calcula sola.</div>`;
+        } else {
+          const campo = game === 'parchis'
+            ? `<label style="${lbl}">Fichas rivales fuera<br><input type="number" name="puntos" placeholder="Fichas" min="0" max="8" value="${puntosVal}" style="width:90px;margin-top:4px;" required></label>`
+            : `<label style="${lbl}">Puntos<br><input type="number" name="puntos" placeholder="Puntos" min="0" value="${puntosVal}" style="width:90px;margin-top:4px;" required></label>`;
+          html += `<form ${formAttrs}>
+            <label style="${lbl}">🏆 ${individual ? 'Jugador ganador' : 'Pareja ganadora'}<br><select name="ganador" required style="margin-top:4px;">${options}</select></label>
+            ${campo}
+            <button class="btn small" type="submit">Guardar resultado</button>
+            ${cancel}
+          </form>`;
+        }
       }
       html += `</div>`;
     });
@@ -962,7 +1026,7 @@ document.addEventListener('click', e => {
     const run = () => {
       const {game, id} = delPair.dataset;
       const g = state.games[game];
-      const enSorteo = (g.rondas||[]).some(r => r.mesas.some(m => m.jugadores.includes(id)));
+      const enSorteo = (g.rondas||[]).some(r => r.mesas.some(m => m.jugadores.includes(id)) || (r.descansa||[]).includes(id));
       if(enSorteo && !confirm('Ya está en el sorteo de rondas. Si lo eliminas se borrarán todas las rondas y resultados de este torneo y habrá que repetir el sorteo. ¿Continuar?')) return;
       g.pairs = g.pairs.filter(p => p.id !== id);
       if(enSorteo) g.rondas = [];
@@ -982,8 +1046,10 @@ document.addEventListener('click', e => {
     const run = () => {
       const g = state.games[game];
       const k = tableSize(game);
-      if(g.pairs.length < k || g.pairs.length % k !== 0){
-        alert(isIndividual(game) ? 'Para hacer el sorteo necesitas un número de jugadores múltiplo de 4 (mínimo 4).' : 'Para hacer el sorteo necesitas un número par de parejas (mínimo 2).');
+      const nIns = g.pairs.length;
+      const invalido = isIndividual(game) ? (nIns < 4 || nIns % 4 !== 0) : nIns < 2;
+      if(invalido){
+        alert(isIndividual(game) ? 'Para hacer el sorteo necesitas un número de jugadores múltiplo de 4 (mínimo 4).' : 'Para hacer el sorteo necesitas al menos 2 parejas.');
         return;
       }
       const previas = g.rondas || [];
@@ -996,9 +1062,9 @@ document.addEventListener('click', e => {
       }
       const fechasPrevias = previas.map(r => r.fecha || '');
       const schedule = generateSchedule(g.pairs.map(p => p.id), R, k);
-      g.rondas = schedule.map((tables, r) => ({
-        id: uid(), numero: r + 1, fecha: fechasPrevias[r] || '',
-        mesas: tables.map((js, i) => ({ id: uid(), label: `Mesa ${i+1}`, jugadores: js, jugada:false, ganadorId:null, puntos:null }))
+      g.rondas = schedule.map((rd, r) => ({
+        id: uid(), numero: r + 1, fecha: fechasPrevias[r] || '', descansa: rd.descansa,
+        mesas: rd.mesas.map((js, i) => ({ id: uid(), label: `Mesa ${i+1}`, jugadores: js, jugada:false, ganadorId:null, puntos:null }))
       }));
       saveData(); render();
     };
@@ -1086,12 +1152,23 @@ document.addEventListener('submit', e => {
       const ronda = form.dataset.ronda, id = form.dataset.id;
       const r = (state.games[game].rondas||[]).find(r => r.id === ronda);
       const mesa = r && r.mesas.find(m => m.id === id);
-      const ganadorId = fd.get('ganador');
-      const puntos = Number(fd.get('puntos'));
-      if(mesa && ganadorId){
-        mesa.ganadorId = ganadorId;
-        mesa.puntos = isNaN(puntos) ? 0 : puntos;
+      if(mesa && game === 'truc'){
+        const c = mesa.jugadores.map((_, i) => Number(fd.get('camas' + i)));
+        const ok = c.length === 2 && c.every(x => Number.isInteger(x) && x >= 0 && x <= 2) && Math.max(...c) === 2 && Math.min(...c) <= 1;
+        if(!ok){ alert('Resultado no válido: una pareja tiene que llegar a 2 camas y la otra a 0 o 1.'); return; }
+        mesa.camas = {};
+        mesa.jugadores.forEach((pid, i) => { mesa.camas[pid] = c[i]; });
+        mesa.ganadorId = c[0] === 2 ? mesa.jugadores[0] : mesa.jugadores[1];
+        mesa.puntos = null;
         mesa.jugada = true;
+      } else if(mesa){
+        const ganadorId = fd.get('ganador');
+        const puntos = Number(fd.get('puntos'));
+        if(ganadorId){
+          mesa.ganadorId = ganadorId;
+          mesa.puntos = isNaN(puntos) ? 0 : puntos;
+          mesa.jugada = true;
+        }
       }
       editingMesa = null;
     }
