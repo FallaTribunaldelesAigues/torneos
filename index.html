@@ -370,7 +370,7 @@ function phonesLine(p){
 }
 
 function defaultGameState(){
-  return { pairs: [], groups: ['A','B'], groupMatches: [], koMatches: [],
+  return { pairs: [], groups: ['A','B'], groupMatches: [], koMatches: [], chinchonRondas: [],
     settings: { fecha:'', hora:'', lugar:'', notas:'', formato:'grupos_eliminatoria' } };
 }
 function defaultState(){
@@ -396,6 +396,7 @@ async function loadData(){
     if(!state.games[k]) state.games[k] = defaultGameState();
     if(!state.games[k].settings) state.games[k].settings = { fecha:'', hora:'', lugar:'', notas:'', formato:'grupos_eliminatoria' };
     if(!state.games[k].settings.formato) state.games[k].settings.formato = 'grupos_eliminatoria';
+    if(!state.games[k].chinchonRondas) state.games[k].chinchonRondas = [];
     state.games[k].groupMatches.forEach(m => { if(m.played === undefined) m.played = true; });
   });
 }
@@ -678,6 +679,124 @@ function getGroupsChampion(game){
   return top.nombre;
 }
 
+function shuffleArray(arr){
+  const a = arr.slice();
+  for(let i = a.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i+1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function pairKey(a,b){ return [a,b].sort().join('|'); }
+
+function previousChinchonPairs(game){
+  const seen = new Set();
+  (state.games[game].chinchonRondas||[]).forEach(ronda => {
+    ronda.mesas.forEach(mesa => {
+      const js = mesa.jugadores;
+      for(let i=0;i<js.length;i++) for(let j=i+1;j<js.length;j++) seen.add(pairKey(js[i], js[j]));
+    });
+  });
+  return seen;
+}
+
+function countRepeatPairs(mesasPlayers, seenSet){
+  let repeats = 0;
+  mesasPlayers.forEach(js => {
+    for(let i=0;i<js.length;i++) for(let j=i+1;j<js.length;j++){
+      if(seenSet.has(pairKey(js[i], js[j]))) repeats++;
+    }
+  });
+  return repeats;
+}
+
+function generateChinchonMesas(game){
+  const ids = state.games[game].pairs.map(p => p.id);
+  const seen = previousChinchonPairs(game);
+  let best = null, bestRepeats = Infinity;
+  for(let attempt = 0; attempt < 80; attempt++){
+    const shuffled = shuffleArray(ids);
+    const mesasPlayers = [];
+    for(let i=0;i<shuffled.length;i+=4) mesasPlayers.push(shuffled.slice(i, i+4));
+    const repeats = countRepeatPairs(mesasPlayers, seen);
+    if(repeats < bestRepeats){ bestRepeats = repeats; best = mesasPlayers; if(repeats === 0) break; }
+  }
+  return best;
+}
+
+function computeChinchonStandings(game){
+  const g = state.games[game];
+  const stats = {};
+  g.pairs.forEach(p => stats[p.id] = { id:p.id, nombre:pairDisplayName(p), pj:0, g:0, puntos:0 });
+  (g.chinchonRondas||[]).forEach(ronda => {
+    ronda.mesas.forEach(mesa => {
+      if(!mesa.jugada) return;
+      mesa.jugadores.forEach(pid => { if(stats[pid]) stats[pid].pj++; });
+      if(mesa.ganadorId && stats[mesa.ganadorId]){
+        stats[mesa.ganadorId].g++;
+        stats[mesa.ganadorId].puntos += Number(mesa.puntos)||0;
+      }
+    });
+  });
+  return Object.values(stats).sort((a,b) => (b.g - a.g) || (a.puntos - b.puntos));
+}
+
+function renderChinchonMesas(game){
+  const g = state.games[game];
+  if(!g.chinchonRondas) g.chinchonRondas = [];
+  let html = '';
+  const standings = computeChinchonStandings(game);
+  html += `<div class="card"><h2>🏆 Clasificación general</h2>
+  <table class="standings"><thead><tr><th>Jugador</th><th>Mesas</th><th>Victorias</th><th>Puntos</th></tr></thead><tbody>` +
+  standings.map((s,i) => `<tr><td>${i===0 && s.g>0 ? '🥇 ' : ''}${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td><td>${s.puntos}</td></tr>`).join('') +
+  `</tbody></table>
+  <div class="note" style="margin-top:8px;">Gana quien más partidas (mesas) haya ganado. En caso de empate a victorias, gana quien menos puntos acumule en las partidas ganadas.</div>
+  </div>`;
+
+  html += `<div class="card"><h2>🎲 Mesas</h2>
+  <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">Cada partida es de 4 jugadores. Haz un sorteo para formar las mesas de la siguiente ronda — los jugadores rotan para que, ronda tras ronda, se vayan enfrentando entre todos.</p>
+  <button class="btn" data-action="chinchon-sorteo" data-game="${game}">🎲 Sorteo de la siguiente ronda</button>`;
+  if(g.pairs.length < 4){
+    html += `<p class="empty" style="margin-top:10px;">Necesitas al menos 4 jugadores apuntados para poder sortear mesas.</p>`;
+  } else if(g.pairs.length % 4 !== 0){
+    html += `<p class="empty" style="margin-top:10px;">El número de jugadores apuntados (${g.pairs.length}) no es múltiplo de 4 — ajusta las inscripciones para poder repartir mesas completas de 4.</p>`;
+  }
+  html += `</div>`;
+
+  const rondas = g.chinchonRondas.slice().reverse();
+  if(rondas.length === 0){
+    html += `<div class="card"><div class="empty">Todavía no se ha sorteado ninguna ronda de mesas.</div></div>`;
+  }
+  rondas.forEach(ronda => {
+    html += `<div class="card"><h2>Ronda ${ronda.numero}</h2>`;
+    ronda.mesas.forEach(mesa => {
+      const jugadoresNombres = mesa.jugadores.map(pid => pairName(game, pid));
+      html += `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+          <strong>${esc(mesa.label)}</strong>
+          ${mesa.jugada ? `<button class="iconbtn" data-action="edit-chinchon-mesa" data-game="${game}" data-ronda="${ronda.id}" data-id="${mesa.id}" title="Corregir resultado">✏️</button>` : ''}
+        </div>
+        <div class="names" style="margin:6px 0;">${jugadoresNombres.map(esc).join(' · ')}</div>`;
+      if(mesa.jugada){
+        html += `<div class="score"><span class="win">🏆 ${esc(pairName(game, mesa.ganadorId))}</span> gana con ${esc(String(mesa.puntos))} puntos</div>`;
+      } else {
+        const options = mesa.jugadores.map(pid => `<option value="${pid}">${esc(pairName(game, pid))}</option>`).join('');
+        html += `<form data-action="chinchon-resultado" data-game="${game}" data-ronda="${ronda.id}" data-id="${mesa.id}" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;">
+          <select name="ganador" required>${options}</select>
+          <input type="number" name="puntos" placeholder="Puntos" min="0" style="width:90px;" required>
+          <button class="btn small" type="submit">Guardar resultado</button>
+        </form>`;
+      }
+      html += `</div>`;
+    });
+    html += `<div style="text-align:right;margin-top:10px;"><button class="iconbtn" data-action="delete-chinchon-ronda" data-game="${game}" data-id="${ronda.id}" title="Eliminar ronda">✕ Eliminar ronda</button></div>`;
+    html += `</div>`;
+  });
+
+  return html;
+}
+
 function render(){
   renderBunting();
   const app = document.getElementById('app');
@@ -764,7 +883,7 @@ function renderGamePage(game){
   const s = state.games[game].settings;
   const formato = s.formato || 'grupos_eliminatoria';
   const showGrupos = formato !== 'eliminatoria';
-  const showElim = formato !== 'grupos';
+  const showElim = formato !== 'grupos' && game !== 'chinchon';
   let sub = gameSubTab[game];
   if((sub === 'grupos' && !showGrupos) || (sub === 'eliminatoria' && !showElim) || (sub === 'ajustes' && !unlocked)){
     sub = 'apuntarse';
@@ -778,7 +897,7 @@ function renderGamePage(game){
   html += `<div class="subtabbar">
     <button class="subtab ${sub==='apuntarse'?'active':''}" data-subtab="apuntarse" data-game="${game}">Apuntarse</button>
     <button class="subtab ${sub==='parejas'?'active':''}" data-subtab="parejas" data-game="${game}">${isIndividual(game)?'Jugadores apuntados':'Parejas apuntadas'}</button>
-    ${showGrupos ? `<button class="subtab ${sub==='grupos'?'active':''}" data-subtab="grupos" data-game="${game}">Grupos</button>` : ''}
+    ${showGrupos ? `<button class="subtab ${sub==='grupos'?'active':''}" data-subtab="grupos" data-game="${game}">${game==='chinchon'?'Mesas':'Grupos'}</button>` : ''}
     ${showElim ? `<button class="subtab ${sub==='eliminatoria'?'active':''}" data-subtab="eliminatoria" data-game="${game}">Eliminatoria</button>` : ''}
     ${unlocked ? `<button class="subtab ${sub==='ajustes'?'active':''}" data-subtab="ajustes" data-game="${game}">Ajustes</button>` : ''}
   </div>`;
@@ -818,7 +937,18 @@ function renderParejasApuntadas(game){
   let html = `<div class="card"><h3>${individual?'Jugadores apuntados':'Parejas apuntadas'} — ${totalInscritas}</h3>`;
   if(totalInscritas === 0){
     html += `<div class="empty">Todavía no se ha apuntado nadie.</div></div>`;
-  } else {
+    return html;
+  }
+  if(game === 'chinchon'){
+    html += `<div class="chips">` + g.pairs.map(p => `
+      <span class="chip">${unlocked && phonesLine(p) ? `<span style="display:flex;flex-direction:column;">${esc(pairDisplayName(p))}${phonesLine(p)}</span>` : esc(pairDisplayName(p))}
+        <button class="iconbtn" data-action="edit-pair" data-game="${game}" data-id="${p.id}" title="Editar">✏️</button>
+        <button class="iconbtn" data-action="delete-pair" data-game="${game}" data-id="${p.id}" title="Eliminar">✕</button>
+      </span>`).join('') + `</div>
+      <p style="font-size:11.5px;color:#7c8598;margin-top:8px;">En Chinchón las mesas se forman por sorteo en la pestaña «Mesas» — no hace falta asignar grupo aquí.</p></div>`;
+    return html;
+  }
+  {
     g.groups.forEach(gr => {
       const pairs = g.pairs.filter(p => p.grupo === gr);
       if(pairs.length === 0) return;
@@ -854,6 +984,9 @@ function renderGroups(game){
   let html = '';
   if(g.pairs.length === 0){
     return `<div class="card"><div class="empty">Añade ${individual?'jugadores':'parejas'} primero en la pestaña «${individual?'Jugadores':'Parejas'}» para poder registrar resultados de grupo.</div></div>`;
+  }
+  if(game === 'chinchon'){
+    return renderChinchonMesas(game);
   }
   if(g.groups.length > 1){
     const globalStandings = computeGlobalStandings(game);
@@ -1252,6 +1385,51 @@ document.addEventListener('click', e => {
     unlocked ? run() : showPinModal(run);
     return;
   }
+
+  const sorteoBtn = e.target.closest('[data-action="chinchon-sorteo"]');
+  if(sorteoBtn){
+    const run = () => {
+      const game = sorteoBtn.dataset.game;
+      const g = state.games[game];
+      if(g.pairs.length < 4 || g.pairs.length % 4 !== 0){
+        alert('Para hacer el sorteo de mesas necesitas un número de jugadores múltiplo de 4 (mínimo 4).');
+        return;
+      }
+      const mesasPlayers = generateChinchonMesas(game);
+      if(!g.chinchonRondas) g.chinchonRondas = [];
+      const numero = g.chinchonRondas.length + 1;
+      const mesas = mesasPlayers.map((js, i) => ({ id: uid(), label: `Mesa ${i+1}`, jugadores: js, jugada:false, ganadorId:null, puntos:null }));
+      g.chinchonRondas.push({ id: uid(), numero, mesas });
+      saveData(); render();
+    };
+    unlocked ? run() : showPinModal(run);
+    return;
+  }
+
+  const delRondaBtn = e.target.closest('[data-action="delete-chinchon-ronda"]');
+  if(delRondaBtn){
+    const run = () => {
+      const {game, id} = delRondaBtn.dataset;
+      if(!confirm('¿Eliminar esta ronda de mesas y sus resultados?')) return;
+      state.games[game].chinchonRondas = (state.games[game].chinchonRondas||[]).filter(r => r.id !== id);
+      saveData(); render();
+    };
+    unlocked ? run() : showPinModal(run);
+    return;
+  }
+
+  const editMesaBtn = e.target.closest('[data-action="edit-chinchon-mesa"]');
+  if(editMesaBtn){
+    const run = () => {
+      const {game, ronda, id} = editMesaBtn.dataset;
+      const r = (state.games[game].chinchonRondas||[]).find(r => r.id === ronda);
+      const mesa = r && r.mesas.find(m => m.id === id);
+      if(mesa){ mesa.jugada = false; mesa.ganadorId = null; mesa.puntos = null; }
+      saveData(); render();
+    };
+    unlocked ? run() : showPinModal(run);
+    return;
+  }
 });
 
 document.addEventListener('submit', e => {
@@ -1335,6 +1513,19 @@ document.addEventListener('submit', e => {
       const fecha = (fd.get('fecha')||'').trim();
       const m = state.games[game].groupMatches.find(m => m.id === id);
       if(m){ m.fecha = fecha; }
+    }
+
+    if(action === 'chinchon-resultado'){
+      const ronda = form.dataset.ronda, id = form.dataset.id;
+      const r = (state.games[game].chinchonRondas||[]).find(r => r.id === ronda);
+      const mesa = r && r.mesas.find(m => m.id === id);
+      const ganadorId = fd.get('ganador');
+      const puntos = Number(fd.get('puntos'));
+      if(mesa && ganadorId){
+        mesa.ganadorId = ganadorId;
+        mesa.puntos = isNaN(puntos) ? 0 : puntos;
+        mesa.jugada = true;
+      }
     }
 
     if(action === 'add-komatch'){
