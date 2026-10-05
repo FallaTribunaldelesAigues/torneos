@@ -393,6 +393,10 @@ async function loadData(){
     dataLoadError = (e && e.message) ? e.message : String(e);
     state = state || defaultState();
   }
+  normalizeState();
+}
+
+function normalizeState(){
   // backfill in case new games were added later
   Object.keys(GAMES).forEach(k => {
     if(!state.games[k]) state.games[k] = defaultGameState();
@@ -414,12 +418,15 @@ function renderErrorBanner(){
 
 let saving = false;
 async function saveData(){
+  saving = true;
   try{
     await dbSet(STORAGE_KEY, JSON.stringify(state));
     dataLoadError = null;
   }catch(e){
     console.error('Error guardando', e);
     dataLoadError = 'no se pudo guardar (' + ((e && e.message) ? e.message : String(e)) + ')';
+  }finally{
+    saving = false;
   }
 }
 
@@ -765,7 +772,7 @@ function renderMesas(game){
   let html = '';
   const standings = computeStandings(game);
   html += `<div class="card"><h2>🏆 Clasificación general</h2>
-  <table class="standings"><thead><tr><th>${individual?'Jugador':'Pareja'}</th><th>Mesas</th><th>Victorias</th>${game==='truc' ? '<th>Camas +</th><th>Camas −</th>' : game==='parchis' ? '<th>Fichas rivales fuera</th>' : '<th>Puntos</th>'}</tr></thead><tbody>` +
+  <table class="standings"><thead><tr><th>${individual?'Jugador':'Pareja'}</th><th>Partidas jugadas</th><th>Victorias</th>${game==='truc' ? '<th>Camas +</th><th>Camas −</th>' : game==='parchis' ? '<th>Fichas rivales fuera</th>' : '<th>Puntos</th>'}</tr></thead><tbody>` +
   standings.map((s,i) => `<tr><td>${i===0 && s.g>0 ? '🥇 ' : ''}${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td>${game==='truc' ? `<td>${s.cf}</td><td>${s.cc}</td>` : game==='parchis' ? `<td>${s.fuera}</td>` : `<td>${s.puntos}</td>`}</tr>`).join('') +
   `</tbody></table>
   <div class="note" style="margin-top:8px;">${
@@ -1205,6 +1212,38 @@ async function init(){
   updateLockBadge();
 }
 init();
+
+// Actualización automática cada 5 minutos: vuelve a leer los datos de la base de datos
+// (para ver los resultados que apunten otros) sin molestar si alguien está escribiendo.
+const REFRESH_MS = 5 * 60 * 1000;
+let refreshing = false;
+function usuarioOcupado(){
+  const a = document.activeElement;
+  if(a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return true;
+  if(document.getElementById('modalRoot') && document.getElementById('modalRoot').innerHTML.trim()) return true;
+  if(editingMesa) return true;
+  return false;
+}
+async function refreshData(){
+  if(refreshing || saving || usuarioOcupado()) return;
+  refreshing = true;
+  try{
+    const val = await dbGet(STORAGE_KEY);
+    if(!val) return;
+    if(val === JSON.stringify(state)) return;
+    if(usuarioOcupado()) return;
+    state = JSON.parse(val);
+    normalizeState();
+    dataLoadError = null;
+    render();
+  }catch(e){
+    console.warn('No se pudo actualizar', e);   // se reintenta en el siguiente ciclo
+  }finally{
+    refreshing = false;
+  }
+}
+setInterval(refreshData, REFRESH_MS);
+document.addEventListener('visibilitychange', () => { if(!document.hidden) refreshData(); });
 </script>
 </body>
 </html>
