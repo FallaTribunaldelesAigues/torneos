@@ -690,39 +690,65 @@ function shuffleArray(arr){
 
 function pairKey(a,b){ return [a,b].sort().join('|'); }
 
-function previousChinchonPairs(game){
-  const seen = new Set();
-  (state.games[game].chinchonRondas||[]).forEach(ronda => {
-    ronda.mesas.forEach(mesa => {
-      const js = mesa.jugadores;
-      for(let i=0;i<js.length;i++) for(let j=i+1;j<js.length;j++) seen.add(pairKey(js[i], js[j]));
-    });
-  });
-  return seen;
-}
-
-function countRepeatPairs(mesasPlayers, seenSet){
-  let repeats = 0;
-  mesasPlayers.forEach(js => {
-    for(let i=0;i<js.length;i++) for(let j=i+1;j<js.length;j++){
-      if(seenSet.has(pairKey(js[i], js[j]))) repeats++;
+// Genera todas las rondas de golpe: R rondas, mesas de 4, minimizando repeticiones de rivales
+function generateChinchonSchedule(ids, R){
+  const n = ids.length, T = n / 4;
+  const cnt = Array.from({length:n}, () => new Array(n).fill(0));
+  const tableOf = p => Math.floor(p / 4);
+  function addRound(perm, d){
+    for(let t = 0; t < T; t++){
+      for(let i = 0; i < 4; i++) for(let j = i+1; j < 4; j++){
+        const a = perm[t*4+i], b = perm[t*4+j];
+        cnt[a][b] += d; cnt[b][a] += d;
+      }
     }
-  });
-  return repeats;
-}
-
-function generateChinchonMesas(game){
-  const ids = state.games[game].pairs.map(p => p.id);
-  const seen = previousChinchonPairs(game);
-  let best = null, bestRepeats = Infinity;
-  for(let attempt = 0; attempt < 80; attempt++){
-    const shuffled = shuffleArray(ids);
-    const mesasPlayers = [];
-    for(let i=0;i<shuffled.length;i+=4) mesasPlayers.push(shuffled.slice(i, i+4));
-    const repeats = countRepeatPairs(mesasPlayers, seen);
-    if(repeats < bestRepeats){ bestRepeats = repeats; best = mesasPlayers; if(repeats === 0) break; }
   }
-  return best;
+  function totalCost(){
+    let c = 0;
+    for(let i = 0; i < n; i++) for(let j = i+1; j < n; j++) c += cnt[i][j] * cnt[i][j];
+    return c;
+  }
+  const P = n * (n-1) / 2, S = R * T * 6;
+  const q = Math.floor(S / P), r = S % P;
+  const lowerBound = (P - r) * q * q + r * (q+1) * (q+1);
+  const idx = Array.from({length:n}, (_,i) => i);
+  let bestRounds = null, bestCost = Infinity;
+  const t0 = Date.now();
+  for(let restart = 0; restart < 400 && bestCost > lowerBound && Date.now() - t0 < 2500; restart++){
+    for(let i = 0; i < n; i++) cnt[i].fill(0);
+    const rounds = [];
+    for(let k = 0; k < R; k++){ const perm = shuffleArray(idx); rounds.push(perm); addRound(perm, 1); }
+    let cost = totalCost();
+    for(let it = 0; it < 30000 && cost > lowerBound; it++){
+      const perm = rounds[Math.floor(Math.random() * R)];
+      const p = Math.floor(Math.random() * n), p2 = Math.floor(Math.random() * n);
+      if(tableOf(p) === tableOf(p2)) continue;
+      const a = perm[p], b = perm[p2];
+      let delta = 0;
+      for(let i = 0; i < 4; i++){
+        const x = perm[tableOf(p)*4+i], y = perm[tableOf(p2)*4+i];
+        if(x !== a){ delta += (-2*cnt[a][x] + 1) + (2*cnt[b][x] + 1); }
+        if(y !== b){ delta += (-2*cnt[b][y] + 1) + (2*cnt[a][y] + 1); }
+      }
+      const temp = 0.7 * (1 - it / 30000) + 0.05;
+      if(delta <= 0 || Math.random() < Math.exp(-delta / temp)){
+        for(let i = 0; i < 4; i++){
+          const x = perm[tableOf(p)*4+i], y = perm[tableOf(p2)*4+i];
+          if(x !== a){ cnt[a][x]--; cnt[x][a]--; cnt[b][x]++; cnt[x][b]++; }
+          if(y !== b){ cnt[b][y]--; cnt[y][b]--; cnt[a][y]++; cnt[y][a]++; }
+        }
+        perm[p] = b; perm[p2] = a;
+        cost += delta;
+        if(cost < bestCost){ bestCost = cost; bestRounds = rounds.map(pm => pm.slice()); }
+      }
+    }
+    if(cost < bestCost){ bestCost = cost; bestRounds = rounds.map(pm => pm.slice()); }
+  }
+  return bestRounds.map(perm => {
+    const tables = [];
+    for(let t = 0; t < T; t++) tables.push([0,1,2,3].map(i => ids[perm[t*4+i]]));
+    return tables;
+  });
 }
 
 function computeChinchonStandings(game){
@@ -754,9 +780,13 @@ function renderChinchonMesas(game){
   <div class="note" style="margin-top:8px;">Gana quien más partidas (mesas) haya ganado. En caso de empate a victorias, gana quien menos puntos acumule en las partidas ganadas.</div>
   </div>`;
 
+  const hayRondas = g.chinchonRondas.length > 0;
   html += `<div class="card"><h2>🎲 Mesas</h2>
-  <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">Cada partida es de 4 jugadores. Haz un sorteo para formar las mesas de la siguiente ronda — los jugadores rotan para que, ronda tras ronda, se vayan enfrentando entre todos.</p>
-  <button class="btn" data-action="chinchon-sorteo" data-game="${game}">🎲 Sorteo de la siguiente ronda</button>`;
+  <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">Cada partida es de 4 jugadores. El sorteo reparte de una vez todas las rondas (3 por viernes), rotando las mesas para que todos jueguen contra todos y se repitan los rivales lo menos posible.</p>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <label style="font-size:12.5px;">Rondas <input type="number" id="chinchonRondasInput" value="${hayRondas ? g.chinchonRondas.length : 9}" min="7" max="20" style="width:70px;"></label>
+    <button class="btn" data-action="chinchon-sorteo" data-game="${game}">🎲 ${hayRondas ? 'Repetir sorteo' : 'Sorteo de todas las rondas'}</button>
+  </div>`;
   if(g.pairs.length < 4){
     html += `<p class="empty" style="margin-top:10px;">Necesitas al menos 4 jugadores apuntados para poder sortear mesas.</p>`;
   } else if(g.pairs.length % 4 !== 0){
@@ -764,11 +794,18 @@ function renderChinchonMesas(game){
   }
   html += `</div>`;
 
-  const rondas = g.chinchonRondas.slice().reverse();
+  const FECHAS = ['13 nov','20 nov','27 nov'];
+  const rondas = g.chinchonRondas.slice().sort((a,b) => a.numero - b.numero);
   if(rondas.length === 0){
-    html += `<div class="card"><div class="empty">Todavía no se ha sorteado ninguna ronda de mesas.</div></div>`;
+    html += `<div class="card"><div class="empty">Todavía no se ha hecho el sorteo de rondas.</div></div>`;
   }
+  let lastViernes = -1;
   rondas.forEach(ronda => {
+    const viernes = Math.floor((ronda.numero - 1) / 3);
+    if(viernes !== lastViernes){
+      html += `<h3 style="margin:16px 4px 4px;color:var(--paper);">Viernes ${viernes+1}${FECHAS[viernes] ? ' — ' + FECHAS[viernes] : ''}</h3>`;
+      lastViernes = viernes;
+    }
     html += `<div class="card"><h2>Ronda ${ronda.numero}</h2>`;
     ronda.mesas.forEach(mesa => {
       const jugadoresNombres = mesa.jugadores.map(pid => pairName(game, pid));
@@ -790,7 +827,6 @@ function renderChinchonMesas(game){
       }
       html += `</div>`;
     });
-    html += `<div style="text-align:right;margin-top:10px;"><button class="iconbtn" data-action="delete-chinchon-ronda" data-game="${game}" data-id="${ronda.id}" title="Eliminar ronda">✕ Eliminar ronda</button></div>`;
     html += `</div>`;
   });
 
@@ -1388,30 +1424,30 @@ document.addEventListener('click', e => {
 
   const sorteoBtn = e.target.closest('[data-action="chinchon-sorteo"]');
   if(sorteoBtn){
+    const game = sorteoBtn.dataset.game;
+    const inputEl = document.getElementById('chinchonRondasInput');
+    let R = parseInt(inputEl && inputEl.value, 10);
+    if(!R || R < 1) R = 9;
+    R = Math.min(R, 20);
     const run = () => {
-      const game = sorteoBtn.dataset.game;
       const g = state.games[game];
       if(g.pairs.length < 4 || g.pairs.length % 4 !== 0){
         alert('Para hacer el sorteo de mesas necesitas un número de jugadores múltiplo de 4 (mínimo 4).');
         return;
       }
-      const mesasPlayers = generateChinchonMesas(game);
-      if(!g.chinchonRondas) g.chinchonRondas = [];
-      const numero = g.chinchonRondas.length + 1;
-      const mesas = mesasPlayers.map((js, i) => ({ id: uid(), label: `Mesa ${i+1}`, jugadores: js, jugada:false, ganadorId:null, puntos:null }));
-      g.chinchonRondas.push({ id: uid(), numero, mesas });
-      saveData(); render();
-    };
-    unlocked ? run() : showPinModal(run);
-    return;
-  }
-
-  const delRondaBtn = e.target.closest('[data-action="delete-chinchon-ronda"]');
-  if(delRondaBtn){
-    const run = () => {
-      const {game, id} = delRondaBtn.dataset;
-      if(!confirm('¿Eliminar esta ronda de mesas y sus resultados?')) return;
-      state.games[game].chinchonRondas = (state.games[game].chinchonRondas||[]).filter(r => r.id !== id);
+      const previas = g.chinchonRondas || [];
+      if(previas.length){
+        const hayResultados = previas.some(r => r.mesas.some(m => m.jugada));
+        const msg = hayResultados
+          ? 'Ya hay rondas con resultados. Si repites el sorteo se BORRARÁN todas las rondas y resultados actuales. ¿Continuar?'
+          : 'Ya hay un sorteo hecho. ¿Repetirlo y sustituir las rondas actuales?';
+        if(!confirm(msg)) return;
+      }
+      const schedule = generateChinchonSchedule(g.pairs.map(p => p.id), R);
+      g.chinchonRondas = schedule.map((tables, r) => ({
+        id: uid(), numero: r + 1,
+        mesas: tables.map((js, i) => ({ id: uid(), label: `Mesa ${i+1}`, jugadores: js, jugada:false, ganadorId:null, puntos:null }))
+      }));
       saveData(); render();
     };
     unlocked ? run() : showPinModal(run);
