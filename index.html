@@ -265,7 +265,7 @@
 </div>
 <div class="top-center">
   <h1 class="display">Torneos de la <span>Falla</span></h1>
-  <div class="sub">Dominó · Truc · Parchís · Chinchón — grupos y eliminatoria, en directo.</div>
+  <div class="sub">Dominó · Truc · Parchís · Chinchón — mesas y rondas, en directo.</div>
 </div>
 </div>
 </header>
@@ -336,7 +336,6 @@ const GAMES = {
   parchis: { name:'Parchís',  letter:'P', icon:ICONS.parchis,  color:'var(--gold)' },
   chinchon:{ name:'Chinchón', letter:'C', icon:ICONS.chinchon, color:'var(--orange)' }
 };
-const ROUND_ORDER = ['Cuartos de final','Semifinal','Final'];
 const STORAGE_KEY = 'torneo-falla-v1';
 const PIN_KEY = 'torneo-falla-pin';
 const PIN_UNLOCKED_KEY = 'torneo-falla-pin-unlocked';
@@ -344,6 +343,7 @@ const PIN_UNLOCKED_KEY = 'torneo-falla-pin-unlocked';
 let state = null;
 let currentTab = 'home';
 let gameSubTab = { domino:'apuntarse', truc:'apuntarse', parchis:'apuntarse', chinchon:'apuntarse' };
+let editingMesa = null;
 let pinConfigured = null;
 let unlocked = false;
 
@@ -351,7 +351,6 @@ function uid(){ return Math.random().toString(36).slice(2,9); }
 function esc(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function isIndividual(game){ return game === 'chinchon'; }
-function isParchis(game){ return game === 'parchis'; }
 
 function pairDisplayName(p){
   if(!p) return '—';
@@ -370,8 +369,7 @@ function phonesLine(p){
 }
 
 function defaultGameState(){
-  return { pairs: [], groups: ['A','B'], groupMatches: [], koMatches: [], chinchonRondas: [],
-    settings: { fecha:'', hora:'', lugar:'', notas:'', formato:'grupos_eliminatoria' } };
+  return { pairs: [], rondas: [] };
 }
 function defaultState(){
   const games = {};
@@ -394,10 +392,11 @@ async function loadData(){
   // backfill in case new games were added later
   Object.keys(GAMES).forEach(k => {
     if(!state.games[k]) state.games[k] = defaultGameState();
-    if(!state.games[k].settings) state.games[k].settings = { fecha:'', hora:'', lugar:'', notas:'', formato:'grupos_eliminatoria' };
-    if(!state.games[k].settings.formato) state.games[k].settings.formato = 'grupos_eliminatoria';
-    if(!state.games[k].chinchonRondas) state.games[k].chinchonRondas = [];
-    state.games[k].groupMatches.forEach(m => { if(m.played === undefined) m.played = true; });
+    const g = state.games[k];
+    if(!g.pairs) g.pairs = [];
+    if(!g.rondas) g.rondas = g.chinchonRondas || [];
+    delete g.chinchonRondas;
+    g.rondas.forEach(r => { if(r.fecha === undefined) r.fecha = ''; });
   });
 }
 
@@ -531,44 +530,22 @@ function showEditPairModal(game, pairId){
   };
 }
 
-function showEditMatchModal(game, kind, matchId){
-  const list = kind === 'group' ? state.games[game].groupMatches : state.games[game].koMatches;
-  const m = list.find(m => m.id === matchId);
-  if(!m) return;
-  const parchis = isParchis(game);
+function showEditMesaModal(game, rondaId, mesaId){
+  const g = state.games[game];
+  const ronda = (g.rondas||[]).find(r => r.id === rondaId);
+  const mesa = ronda && ronda.mesas.find(m => m.id === mesaId);
+  if(!mesa) return;
+  const individual = isIndividual(game);
   const root = document.getElementById('modalRoot');
+  const opts = sel => g.pairs.map(p => `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(pairDisplayName(p))}</option>`).join('');
   root.innerHTML = `<div class="modal-overlay" id="editOverlay">
     <div class="modal-card">
-      <h3>Editar resultado</h3>
-      <p class="modal-desc">${esc(pairName(game,m.pair1))} vs ${esc(pairName(game,m.pair2))}</p>
-      ${parchis ? `
-      <div style="text-align:left;margin-bottom:8px;">
-        <label style="font-size:11.5px;font-weight:600;color:#54607a;">Ganador</label>
-        <select id="editGanador" style="margin-top:4px;width:100%;">
-          <option value="pair1" ${m.score1>m.score2?'selected':''}>${esc(pairName(game,m.pair1))}</option>
-          <option value="pair2" ${m.score2>m.score1?'selected':''}>${esc(pairName(game,m.pair2))}</option>
-        </select>
-      </div>
-      ${kind === 'group' ? `<div style="text-align:left;margin-bottom:8px;">
-        <label style="font-size:11.5px;font-weight:600;color:#54607a;">Fichas fuera</label>
-        <input id="editFichas" type="number" min="0" value="${esc(String(m.fichasFuera||0))}" style="margin-top:4px;">
-      </div>` : ''}
-      ` : `
-      <div style="display:flex;gap:8px;margin-bottom:8px;">
-        <div style="flex:1;text-align:left;">
-          <label style="font-size:11.5px;font-weight:600;color:#54607a;">Pts ${esc(pairName(game,m.pair1))}</label>
-          <input id="editScore1" type="number" value="${esc(String(m.score1))}" style="margin-top:4px;">
-        </div>
-        <div style="flex:1;text-align:left;">
-          <label style="font-size:11.5px;font-weight:600;color:#54607a;">Pts ${esc(pairName(game,m.pair2))}</label>
-          <input id="editScore2" type="number" value="${esc(String(m.score2))}" style="margin-top:4px;">
-        </div>
-      </div>
-      `}
-      <div style="text-align:left;margin-bottom:8px;">
-        <label style="font-size:11.5px;font-weight:600;color:#54607a;">Fecha</label>
-        <input id="editFecha" type="date" value="${esc(m.fecha||'')}" style="margin-top:4px;">
-      </div>
+      <h3>${esc(mesa.label)} · ronda ${ronda.numero}</h3>
+      <p class="modal-desc">Elige quién juega en esta mesa. Si eliges a alguien que está en otra mesa de la misma ronda, se intercambian. Se borra el resultado de las mesas afectadas.</p>
+      ${mesa.jugadores.map((pid, i) => `<div style="text-align:left;margin-bottom:8px;">
+        <label style="font-size:11.5px;font-weight:600;color:#54607a;">${individual ? 'Jugador' : 'Pareja'} ${i+1}</label>
+        <select id="mesaSlot${i}" style="margin-top:4px;">${opts(pid)}</select>
+      </div>`).join('')}
       <div class="modal-actions">
         <button class="btn secondary" id="editCancel" type="button">Cancelar</button>
         <button class="btn" id="editSave" type="button">Guardar</button>
@@ -577,17 +554,32 @@ function showEditMatchModal(game, kind, matchId){
   </div>`;
   document.getElementById('editCancel').onclick = () => { root.innerHTML = ''; };
   document.getElementById('editSave').onclick = () => {
-    if(parchis){
-      const ganador = document.getElementById('editGanador').value;
-      m.score1 = ganador === 'pair1' ? 1 : 0;
-      m.score2 = ganador === 'pair2' ? 1 : 0;
-      if(kind === 'group') m.fichasFuera = Number(document.getElementById('editFichas').value)||0;
-    } else {
-      m.score1 = Number(document.getElementById('editScore1').value);
-      m.score2 = Number(document.getElementById('editScore2').value);
+    const nuevos = mesa.jugadores.map((_, i) => document.getElementById('mesaSlot' + i).value);
+    if(new Set(nuevos).size !== nuevos.length){
+      alert(individual ? 'Elige jugadores distintos.' : 'Elige parejas distintas.');
+      return;
     }
-    m.fecha = document.getElementById('editFecha').value.trim();
-    m.played = true;
+    const antes = ronda.mesas.map(m => m.jugadores.slice());
+    const js = ronda.mesas.map(m => m.jugadores.slice());
+    const mi = ronda.mesas.indexOf(mesa);
+    nuevos.forEach((x, i) => {
+      const actual = js[mi][i];
+      if(actual === x) return;
+      for(let a = 0; a < js.length; a++){
+        const j = js[a].indexOf(x);
+        if(j !== -1){ js[a][j] = actual; break; }
+      }
+      js[mi][i] = x;
+    });
+    const cambiada = a => antes[a].slice().sort().join('|') !== js[a].slice().sort().join('|');
+    const afectadas = ronda.mesas.filter((m, a) => cambiada(a));
+    if(afectadas.length === 0){ root.innerHTML = ''; return; }
+    if(afectadas.some(m => m.jugada) && !confirm('Se borrará el resultado de las mesas afectadas. ¿Continuar?')) return;
+    ronda.mesas.forEach((m, a) => {
+      const cambia = cambiada(a);
+      m.jugadores = js[a];
+      if(cambia){ m.jugada = false; m.ganadorId = null; m.puntos = null; }
+    });
     root.innerHTML = '';
     saveData();
     render();
@@ -596,87 +588,7 @@ function showEditMatchModal(game, kind, matchId){
 
 function pairName(game, id){
   const p = state.games[game].pairs.find(p => p.id === id);
-  return pairDisplayName(p);
-}
-
-function computeStandings(game, grupo){
-  const g = state.games[game];
-  const pairs = g.pairs.filter(p => p.grupo === grupo);
-  const stats = {};
-  pairs.forEach(p => stats[p.id] = { id:p.id, nombre:pairDisplayName(p), pj:0, g:0, pf:0, pc:0 });
-  const parchis = isParchis(game);
-  g.groupMatches.filter(m => m.grupo === grupo && m.played).forEach(m => {
-    if(!stats[m.pair1] || !stats[m.pair2]) return;
-    stats[m.pair1].pj++; stats[m.pair2].pj++;
-    if(parchis){
-      const fichas = Number(m.fichasFuera)||0;
-      if(m.score1 > m.score2){ stats[m.pair1].g++; stats[m.pair1].pf += fichas; stats[m.pair2].pc += fichas; }
-      else if(m.score2 > m.score1){ stats[m.pair2].g++; stats[m.pair2].pf += fichas; stats[m.pair1].pc += fichas; }
-    } else {
-      stats[m.pair1].pf += m.score1; stats[m.pair1].pc += m.score2;
-      stats[m.pair2].pf += m.score2; stats[m.pair2].pc += m.score1;
-      if(m.score1 > m.score2) stats[m.pair1].g++;
-      else if(m.score2 > m.score1) stats[m.pair2].g++;
-    }
-  });
-  if(parchis){
-    return Object.values(stats).sort((a,b) => (b.g - a.g) || (b.pf - a.pf));
-  }
-  return Object.values(stats).sort((a,b) => (b.g - a.g) || ((b.pf-b.pc) - (a.pf-a.pc)) || (b.pf - a.pf));
-}
-
-function computeGlobalStandings(game){
-  const g = state.games[game];
-  const pairs = g.pairs.filter(p => p.grupo);
-  const stats = {};
-  pairs.forEach(p => stats[p.id] = { id:p.id, nombre:pairDisplayName(p), grupo:p.grupo, pj:0, g:0, pf:0, pc:0 });
-  const parchis = isParchis(game);
-  g.groupMatches.filter(m => m.played).forEach(m => {
-    if(!stats[m.pair1] || !stats[m.pair2]) return;
-    stats[m.pair1].pj++; stats[m.pair2].pj++;
-    if(parchis){
-      const fichas = Number(m.fichasFuera)||0;
-      if(m.score1 > m.score2){ stats[m.pair1].g++; stats[m.pair1].pf += fichas; stats[m.pair2].pc += fichas; }
-      else if(m.score2 > m.score1){ stats[m.pair2].g++; stats[m.pair2].pf += fichas; stats[m.pair1].pc += fichas; }
-    } else {
-      stats[m.pair1].pf += m.score1; stats[m.pair1].pc += m.score2;
-      stats[m.pair2].pf += m.score2; stats[m.pair2].pc += m.score1;
-      if(m.score1 > m.score2) stats[m.pair1].g++;
-      else if(m.score2 > m.score1) stats[m.pair2].g++;
-    }
-  });
-  if(parchis){
-    return Object.values(stats).sort((a,b) => (b.g - a.g) || (b.pf - a.pf));
-  }
-  return Object.values(stats).sort((a,b) => (b.g - a.g) || ((b.pf-b.pc) - (a.pf-a.pc)) || (b.pf - a.pf));
-}
-
-function groupsAllPlayed(game){
-  const g = state.games[game];
-  if(!g.groups || g.groups.length === 0) return false;
-  return g.groups.every(gr => {
-    const pairsInGroup = g.pairs.filter(p => p.grupo === gr);
-    if(pairsInGroup.length < 2) return false;
-    const totalPosible = pairsInGroup.length * (pairsInGroup.length - 1) / 2;
-    const playedCount = g.groupMatches.filter(m => m.grupo === gr && m.played).length;
-    return playedCount >= totalPosible;
-  });
-}
-
-function getGroupsChampion(game){
-  if(!groupsAllPlayed(game)) return null;
-  const standings = computeGlobalStandings(game);
-  if(standings.length === 0) return null;
-  const top = standings[0];
-  if(standings.length > 1){
-    const second = standings[1];
-    const parchis = isParchis(game);
-    const tie = parchis
-      ? (top.g === second.g && top.pf === second.pf)
-      : (top.g === second.g && (top.pf-top.pc) === (second.pf-second.pc) && top.pf === second.pf);
-    if(tie) return null;
-  }
-  return top.nombre;
+  return p ? pairDisplayName(p) : '—';
 }
 
 function shuffleArray(arr){
@@ -690,15 +602,19 @@ function shuffleArray(arr){
 
 function pairKey(a,b){ return [a,b].sort().join('|'); }
 
-// Genera todas las rondas de golpe: R rondas, mesas de 4, minimizando repeticiones de rivales
-function generateChinchonSchedule(ids, R){
-  const n = ids.length, T = n / 4;
+// Chinchón: mesas de 4 jugadores. Resto de torneos: mesas de 2 parejas.
+function tableSize(game){ return isIndividual(game) ? 4 : 2; }
+
+// Genera todas las rondas de golpe: R rondas con mesas de k, minimizando repeticiones de rivales
+function generateSchedule(ids, R, k){
+  const n = ids.length, T = n / k;
+  const tablePairs = k * (k-1) / 2;
   const cnt = Array.from({length:n}, () => new Array(n).fill(0));
-  const tableOf = p => Math.floor(p / 4);
+  const tableOf = p => Math.floor(p / k);
   function addRound(perm, d){
     for(let t = 0; t < T; t++){
-      for(let i = 0; i < 4; i++) for(let j = i+1; j < 4; j++){
-        const a = perm[t*4+i], b = perm[t*4+j];
+      for(let i = 0; i < k; i++) for(let j = i+1; j < k; j++){
+        const a = perm[t*k+i], b = perm[t*k+j];
         cnt[a][b] += d; cnt[b][a] += d;
       }
     }
@@ -708,7 +624,7 @@ function generateChinchonSchedule(ids, R){
     for(let i = 0; i < n; i++) for(let j = i+1; j < n; j++) c += cnt[i][j] * cnt[i][j];
     return c;
   }
-  const P = n * (n-1) / 2, S = R * T * 6;
+  const P = n * (n-1) / 2, S = R * T * tablePairs;
   const q = Math.floor(S / P), r = S % P;
   const lowerBound = (P - r) * q * q + r * (q+1) * (q+1);
   const idx = Array.from({length:n}, (_,i) => i);
@@ -717,23 +633,24 @@ function generateChinchonSchedule(ids, R){
   for(let restart = 0; restart < 400 && bestCost > lowerBound && Date.now() - t0 < 2500; restart++){
     for(let i = 0; i < n; i++) cnt[i].fill(0);
     const rounds = [];
-    for(let k = 0; k < R; k++){ const perm = shuffleArray(idx); rounds.push(perm); addRound(perm, 1); }
+    for(let x = 0; x < R; x++){ const perm = shuffleArray(idx); rounds.push(perm); addRound(perm, 1); }
     let cost = totalCost();
+    if(cost < bestCost){ bestCost = cost; bestRounds = rounds.map(pm => pm.slice()); }
     for(let it = 0; it < 30000 && cost > lowerBound; it++){
       const perm = rounds[Math.floor(Math.random() * R)];
       const p = Math.floor(Math.random() * n), p2 = Math.floor(Math.random() * n);
       if(tableOf(p) === tableOf(p2)) continue;
       const a = perm[p], b = perm[p2];
       let delta = 0;
-      for(let i = 0; i < 4; i++){
-        const x = perm[tableOf(p)*4+i], y = perm[tableOf(p2)*4+i];
+      for(let i = 0; i < k; i++){
+        const x = perm[tableOf(p)*k+i], y = perm[tableOf(p2)*k+i];
         if(x !== a){ delta += (-2*cnt[a][x] + 1) + (2*cnt[b][x] + 1); }
         if(y !== b){ delta += (-2*cnt[b][y] + 1) + (2*cnt[a][y] + 1); }
       }
       const temp = 0.7 * (1 - it / 30000) + 0.05;
       if(delta <= 0 || Math.random() < Math.exp(-delta / temp)){
-        for(let i = 0; i < 4; i++){
-          const x = perm[tableOf(p)*4+i], y = perm[tableOf(p2)*4+i];
+        for(let i = 0; i < k; i++){
+          const x = perm[tableOf(p)*k+i], y = perm[tableOf(p2)*k+i];
           if(x !== a){ cnt[a][x]--; cnt[x][a]--; cnt[b][x]++; cnt[x][b]++; }
           if(y !== b){ cnt[b][y]--; cnt[y][b]--; cnt[a][y]++; cnt[y][a]++; }
         }
@@ -742,20 +659,23 @@ function generateChinchonSchedule(ids, R){
         if(cost < bestCost){ bestCost = cost; bestRounds = rounds.map(pm => pm.slice()); }
       }
     }
-    if(cost < bestCost){ bestCost = cost; bestRounds = rounds.map(pm => pm.slice()); }
   }
   return bestRounds.map(perm => {
     const tables = [];
-    for(let t = 0; t < T; t++) tables.push([0,1,2,3].map(i => ids[perm[t*4+i]]));
+    for(let t = 0; t < T; t++){
+      const mesa = [];
+      for(let i = 0; i < k; i++) mesa.push(ids[perm[t*k+i]]);
+      tables.push(mesa);
+    }
     return tables;
   });
 }
 
-function computeChinchonStandings(game){
+function computeStandings(game){
   const g = state.games[game];
   const stats = {};
   g.pairs.forEach(p => stats[p.id] = { id:p.id, nombre:pairDisplayName(p), pj:0, g:0, puntos:0 });
-  (g.chinchonRondas||[]).forEach(ronda => {
+  (g.rondas||[]).forEach(ronda => {
     ronda.mesas.forEach(mesa => {
       if(!mesa.jugada) return;
       mesa.jugadores.forEach(pid => { if(stats[pid]) stats[pid].pj++; });
@@ -768,61 +688,121 @@ function computeChinchonStandings(game){
   return Object.values(stats).sort((a,b) => (b.g - a.g) || (a.puntos - b.puntos));
 }
 
-function renderChinchonMesas(game){
+// Cuántos enfrentamientos distintos (quién ha coincidido en mesa con quién) cubre el sorteo
+function computeCoverage(game){
   const g = state.games[game];
-  if(!g.chinchonRondas) g.chinchonRondas = [];
+  const n = g.pairs.length;
+  const seen = new Set();
+  (g.rondas||[]).forEach(r => r.mesas.forEach(m => {
+    const js = m.jugadores;
+    for(let i = 0; i < js.length; i++) for(let j = i+1; j < js.length; j++) seen.add(pairKey(js[i], js[j]));
+  }));
+  return { covered: seen.size, total: n * (n-1) / 2 };
+}
+
+function fmtFecha(f){
+  if(!f) return '';
+  const parts = String(f).split('-').map(Number);
+  if(parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) return f;
+  return new Date(parts[0], parts[1]-1, parts[2]).toLocaleDateString('es-ES', { weekday:'short', day:'numeric', month:'short' });
+}
+
+function getChampion(game){
+  const g = state.games[game];
+  const rondas = g.rondas || [];
+  if(!rondas.length) return null;
+  if(!rondas.every(r => r.mesas.every(m => m.jugada))) return null;
+  const st = computeStandings(game);
+  if(!st.length || st[0].g === 0) return null;
+  if(st.length > 1 && st[0].g === st[1].g && st[0].puntos === st[1].puntos) return null;
+  return st[0].nombre;
+}
+
+function renderMesas(game){
+  const g = state.games[game];
+  const individual = isIndividual(game);
+  const k = tableSize(game);
+  const unidad = individual ? 'jugador' : 'pareja';
+  const unidades = individual ? 'jugadores' : 'parejas';
+  if(!g.rondas) g.rondas = [];
+  if(g.pairs.length === 0){
+    return `<div class="card"><div class="empty">Añade ${unidades} primero en la pestaña «Apuntarse» para poder sortear las mesas.</div></div>`;
+  }
   let html = '';
-  const standings = computeChinchonStandings(game);
+  const standings = computeStandings(game);
   html += `<div class="card"><h2>🏆 Clasificación general</h2>
-  <table class="standings"><thead><tr><th>Jugador</th><th>Mesas</th><th>Victorias</th><th>Puntos</th></tr></thead><tbody>` +
+  <table class="standings"><thead><tr><th>${individual?'Jugador':'Pareja'}</th><th>Mesas</th><th>Victorias</th><th>Puntos</th></tr></thead><tbody>` +
   standings.map((s,i) => `<tr><td>${i===0 && s.g>0 ? '🥇 ' : ''}${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td><td>${s.puntos}</td></tr>`).join('') +
   `</tbody></table>
-  <div class="note" style="margin-top:8px;">Gana quien más partidas (mesas) haya ganado. En caso de empate a victorias, gana quien menos puntos acumule en las partidas ganadas.</div>
+  <div class="note" style="margin-top:8px;">Gana quien más partidas haya ganado. En caso de empate a victorias, gana quien menos puntos acumule en las partidas ganadas.</div>
   </div>`;
 
-  const hayRondas = g.chinchonRondas.length > 0;
+  const n = g.pairs.length;
+  const hayRondas = g.rondas.length > 0;
   html += `<div class="card"><h2>🎲 Mesas</h2>
-  <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">Cada partida es de 4 jugadores. El sorteo reparte de una vez todas las rondas (3 por viernes), rotando las mesas para que todos jueguen contra todos y se repitan los rivales lo menos posible.</p>
+  <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">${individual ? 'Cada partida es de 4 jugadores.' : 'Cada partida enfrenta a dos parejas.'} El sorteo reparte de una vez todas las rondas, rotando las mesas para que se enfrenten entre todos y se repitan lo menos posible. Cada ronda tiene su propia fecha.</p>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-    <label style="font-size:12.5px;">Rondas <input type="number" id="chinchonRondasInput" value="${hayRondas ? g.chinchonRondas.length : 9}" min="7" max="20" style="width:70px;"></label>
-    <button class="btn" data-action="chinchon-sorteo" data-game="${game}">🎲 ${hayRondas ? 'Repetir sorteo' : 'Sorteo de todas las rondas'}</button>
+    <label style="font-size:12.5px;">Rondas <input type="number" id="rondasInput" value="${hayRondas ? g.rondas.length : 9}" min="1" max="30" style="width:70px;"></label>
+    <button class="btn" data-action="sorteo" data-game="${game}">🎲 ${hayRondas ? 'Repetir sorteo' : 'Sorteo de todas las rondas'}</button>
+    ${hayRondas ? `<button class="btn secondary" data-action="borrar-sorteo" data-game="${game}">🗑 Borrar sorteo</button>` : ''}
   </div>`;
-  if(g.pairs.length < 4){
-    html += `<p class="empty" style="margin-top:10px;">Necesitas al menos 4 jugadores apuntados para poder sortear mesas.</p>`;
-  } else if(g.pairs.length % 4 !== 0){
-    html += `<p class="empty" style="margin-top:10px;">El número de jugadores apuntados (${g.pairs.length}) no es múltiplo de 4 — ajusta las inscripciones para poder repartir mesas completas de 4.</p>`;
+  if(n < k || n % k !== 0){
+    html += `<p class="empty" style="margin-top:10px;">${individual ? `El número de jugadores apuntados (${n}) tiene que ser múltiplo de 4 para repartir mesas completas.` : `El número de parejas apuntadas (${n}) tiene que ser par (mínimo 2) para repartir las mesas.`}</p>`;
+  } else if(hayRondas){
+    const cov = computeCoverage(game);
+    if(cov.covered >= cov.total){
+      html += `<p class="note" style="margin-top:10px;">✅ Con estas ${g.rondas.length} rondas todos se enfrentan con todos al menos una vez.</p>`;
+    } else {
+      html += `<p class="note" style="margin-top:10px;">⚠️ Con ${g.rondas.length} rondas quedan ${cov.total - cov.covered} enfrentamientos sin cubrir (de ${cov.total}). ${individual ? 'Prueba con más rondas.' : `Para que todas las parejas se enfrenten entre sí hacen falta al menos ${n-1} rondas.`}</p>`;
+    }
+    const enSorteo = new Set();
+    g.rondas.forEach(r => r.mesas.forEach(m => m.jugadores.forEach(id => enSorteo.add(id))));
+    const fuera = g.pairs.filter(p => !enSorteo.has(p.id)).length;
+    if(fuera){
+      html += `<p class="note" style="margin-top:6px;">⚠️ Hay ${fuera} inscripci${fuera===1?'ón posterior':'ones posteriores'} al sorteo que no ${fuera===1?'está':'están'} en ninguna mesa. Repite el sorteo para incluir${fuera===1?'la':'las'}.</p>`;
+    }
   }
   html += `</div>`;
 
-  const FECHAS = ['13 nov','20 nov','27 nov'];
-  const rondas = g.chinchonRondas.slice().sort((a,b) => a.numero - b.numero);
+  const rondas = g.rondas.slice().sort((a,b) => a.numero - b.numero);
   if(rondas.length === 0){
     html += `<div class="card"><div class="empty">Todavía no se ha hecho el sorteo de rondas.</div></div>`;
   }
-  let lastViernes = -1;
   rondas.forEach(ronda => {
-    const viernes = Math.floor((ronda.numero - 1) / 3);
-    if(viernes !== lastViernes){
-      html += `<h3 style="margin:16px 4px 4px;color:var(--paper);">Viernes ${viernes+1}${FECHAS[viernes] ? ' — ' + FECHAS[viernes] : ''}</h3>`;
-      lastViernes = viernes;
-    }
-    html += `<div class="card"><h2>Ronda ${ronda.numero}</h2>`;
+    html += `<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+        <h2 style="margin:0;">Ronda ${ronda.numero}${ronda.fecha ? ' · ' + esc(fmtFecha(ronda.fecha)) : ''}</h2>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+          <form data-action="set-ronda-fecha" data-game="${game}" data-ronda="${ronda.id}" style="display:flex;gap:6px;align-items:center;">
+            <span style="font-size:12px;color:#54607a;">📅</span>
+            <input type="date" name="fecha" value="${esc(ronda.fecha||'')}" style="width:auto;">
+            <button class="btn secondary small" type="submit">Guardar fecha</button>
+          </form>
+          <button class="iconbtn" data-action="delete-ronda" data-game="${game}" data-id="${ronda.id}" title="Eliminar esta ronda">🗑</button>
+        </div>
+      </div>`;
     ronda.mesas.forEach(mesa => {
-      const jugadoresNombres = mesa.jugadores.map(pid => pairName(game, pid));
+      const nombres = mesa.jugadores.map(pid => pairName(game, pid));
+      const editando = editingMesa === mesa.id;
       html += `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:10px;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
           <strong>${esc(mesa.label)}</strong>
-          ${mesa.jugada ? `<button class="iconbtn" data-action="edit-chinchon-mesa" data-game="${game}" data-ronda="${ronda.id}" data-id="${mesa.id}" title="Corregir resultado">✏️</button>` : ''}
+          <span>
+            <button class="iconbtn" data-action="edit-mesa-jugadores" data-game="${game}" data-ronda="${ronda.id}" data-id="${mesa.id}" title="Cambiar ${unidades} de esta mesa">👥</button>
+            ${mesa.jugada && !editando ? `<button class="iconbtn" data-action="edit-mesa" data-game="${game}" data-ronda="${ronda.id}" data-id="${mesa.id}" title="Editar resultado">✏️</button>` : ''}
+          </span>
         </div>
-        <div class="names" style="margin:6px 0;">${jugadoresNombres.map(esc).join(' · ')}</div>`;
-      if(mesa.jugada){
+        <div class="names" style="margin:6px 0;">${nombres.map(esc).join(individual ? ' · ' : ' vs ')}</div>`;
+      if(mesa.jugada && !editando){
         html += `<div class="score"><span class="win">🏆 ${esc(pairName(game, mesa.ganadorId))}</span> gana con ${esc(String(mesa.puntos))} puntos</div>`;
       } else {
-        const options = mesa.jugadores.map(pid => `<option value="${pid}">${esc(pairName(game, pid))}</option>`).join('');
-        html += `<form data-action="chinchon-resultado" data-game="${game}" data-ronda="${ronda.id}" data-id="${mesa.id}" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;">
+        const options = mesa.jugadores.map(pid => `<option value="${pid}" ${mesa.ganadorId === pid ? 'selected' : ''}>${esc(pairName(game, pid))}</option>`).join('');
+        const puntosVal = (mesa.jugada && mesa.puntos !== null && mesa.puntos !== undefined) ? esc(String(mesa.puntos)) : '';
+        html += `<form data-action="mesa-resultado" data-game="${game}" data-ronda="${ronda.id}" data-id="${mesa.id}" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;">
           <select name="ganador" required>${options}</select>
-          <input type="number" name="puntos" placeholder="Puntos" min="0" style="width:90px;" required>
+          <input type="number" name="puntos" placeholder="Puntos" min="0" value="${puntosVal}" style="width:90px;" required>
           <button class="btn small" type="submit">Guardar resultado</button>
+          ${editando ? `<button class="btn secondary small" type="button" data-action="cancel-edit-mesa">Cancelar</button>` : ''}
         </form>`;
       }
       html += `</div>`;
@@ -883,17 +863,6 @@ function renderHome(){
   return html;
 }
 
-function getChampion(game){
-  const s = state.games[game].settings || {};
-  const formato = s.formato || 'grupos_eliminatoria';
-  if(formato === 'grupos') return getGroupsChampion(game);
-  const final = state.games[game].koMatches.find(m => m.ronda === 'Final' && m.played);
-  if(!final) return null;
-  if(final.score1 === final.score2) return null;
-  const winId = final.score1 > final.score2 ? final.pair1 : final.pair2;
-  return pairName(game, winId);
-}
-
 function renderResumen(){
   let html = `<div class="summary-grid">`;
   Object.entries(GAMES).forEach(([key,meta]) => {
@@ -910,38 +879,24 @@ function renderResumen(){
       </div>
     </div>`;
   });
-  html += `</div><div class="note">Cualquiera puede apuntarse a un torneo. Meter resultados y gestionar grupos, fechas y formato requiere el PIN de organización.</div>`;
+  html += `</div><div class="note">Cualquiera puede apuntarse a un torneo. Hacer el sorteo de mesas, meter resultados y poner fechas requiere el PIN de organización.</div>`;
   return html;
 }
 
 function renderGamePage(game){
-  const meta = GAMES[game];
-  const s = state.games[game].settings;
-  const formato = s.formato || 'grupos_eliminatoria';
-  const showGrupos = formato !== 'eliminatoria';
-  const showElim = formato !== 'grupos' && game !== 'chinchon';
   let sub = gameSubTab[game];
-  if((sub === 'grupos' && !showGrupos) || (sub === 'eliminatoria' && !showElim) || (sub === 'ajustes' && !unlocked)){
+  if(sub !== 'apuntarse' && sub !== 'parejas' && sub !== 'mesas'){
     sub = 'apuntarse';
     gameSubTab[game] = sub;
   }
-  let html = '';
-  if(s.fecha || s.hora || s.lugar){
-    const parts = [s.fecha, s.hora, s.lugar].filter(Boolean).map(esc);
-    html += `<div class="note" style="margin:-2px 0 10px;">📅 ${parts.join(' · ')}</div>`;
-  }
-  html += `<div class="subtabbar">
+  let html = `<div class="subtabbar">
     <button class="subtab ${sub==='apuntarse'?'active':''}" data-subtab="apuntarse" data-game="${game}">Apuntarse</button>
     <button class="subtab ${sub==='parejas'?'active':''}" data-subtab="parejas" data-game="${game}">${isIndividual(game)?'Jugadores apuntados':'Parejas apuntadas'}</button>
-    ${showGrupos ? `<button class="subtab ${sub==='grupos'?'active':''}" data-subtab="grupos" data-game="${game}">${game==='chinchon'?'Mesas':'Grupos'}</button>` : ''}
-    ${showElim ? `<button class="subtab ${sub==='eliminatoria'?'active':''}" data-subtab="eliminatoria" data-game="${game}">Eliminatoria</button>` : ''}
-    ${unlocked ? `<button class="subtab ${sub==='ajustes'?'active':''}" data-subtab="ajustes" data-game="${game}">Ajustes</button>` : ''}
+    <button class="subtab ${sub==='mesas'?'active':''}" data-subtab="mesas" data-game="${game}">Mesas</button>
   </div>`;
   if(sub === 'apuntarse') html += renderApuntarse(game);
   else if(sub === 'parejas') html += renderParejasApuntadas(game);
-  else if(sub === 'grupos') html += renderGroups(game);
-  else if(sub === 'eliminatoria') html += renderKnockout(game);
-  else html += renderAjustes(game);
+  else html += renderMesas(game);
   return html;
 }
 
@@ -968,355 +923,18 @@ function renderApuntarse(game){
 function renderParejasApuntadas(game){
   const g = state.games[game];
   const individual = isIndividual(game);
-  const sinGrupo = g.pairs.filter(p => !p.grupo);
-  const totalInscritas = g.pairs.length;
-  let html = `<div class="card"><h3>${individual?'Jugadores apuntados':'Parejas apuntadas'} — ${totalInscritas}</h3>`;
-  if(totalInscritas === 0){
+  const total = g.pairs.length;
+  let html = `<div class="card"><h3>${individual?'Jugadores apuntados':'Parejas apuntadas'} — ${total}</h3>`;
+  if(total === 0){
     html += `<div class="empty">Todavía no se ha apuntado nadie.</div></div>`;
     return html;
   }
-  if(game === 'chinchon'){
-    html += `<div class="chips">` + g.pairs.map(p => `
-      <span class="chip">${unlocked && phonesLine(p) ? `<span style="display:flex;flex-direction:column;">${esc(pairDisplayName(p))}${phonesLine(p)}</span>` : esc(pairDisplayName(p))}
-        <button class="iconbtn" data-action="edit-pair" data-game="${game}" data-id="${p.id}" title="Editar">✏️</button>
-        <button class="iconbtn" data-action="delete-pair" data-game="${game}" data-id="${p.id}" title="Eliminar">✕</button>
-      </span>`).join('') + `</div>
-      <p style="font-size:11.5px;color:#7c8598;margin-top:8px;">En Chinchón las mesas se forman por sorteo en la pestaña «Mesas» — no hace falta asignar grupo aquí.</p></div>`;
-    return html;
-  }
-  {
-    g.groups.forEach(gr => {
-      const pairs = g.pairs.filter(p => p.grupo === gr);
-      if(pairs.length === 0) return;
-      html += `<h3 style="margin-top:14px;">Grupo ${gr}</h3><div class="chips">` + pairs.map(p => `
-        <span class="chip">${unlocked && phonesLine(p) ? `<span style="display:flex;flex-direction:column;">${esc(pairDisplayName(p))}${phonesLine(p)}</span>` : esc(pairDisplayName(p))}
-          <button class="iconbtn" data-action="edit-pair" data-game="${game}" data-id="${p.id}" title="Editar">✏️</button>
-          <button class="iconbtn" data-action="delete-pair" data-game="${game}" data-id="${p.id}" title="Eliminar">✕</button>
-        </span>`).join('') + `</div>`;
-    });
-    if(sinGrupo.length){
-      html += `<h3 style="margin-top:14px;">Sin grupo asignado todavía</h3>`;
-      const groupOptions = g.groups.map(gr => `<option value="${gr}">Grupo ${gr}</option>`).join('');
-      html += `<div class="matchlist">` + sinGrupo.map(p => `
-        <form class="matchrow" data-action="assign-group" data-game="${game}" data-id="${p.id}" style="flex-wrap:wrap;">
-          <span class="names">${esc(pairDisplayName(p))}${unlocked ? phonesLine(p) : ''}</span>
-
-          <select name="grupo" style="width:auto;flex:0 0 auto;">${groupOptions}</select>
-          <button class="btn small" type="submit">Asignar</button>
-          <button class="iconbtn" type="button" data-action="edit-pair" data-game="${game}" data-id="${p.id}" title="Editar">✏️</button>
-          <button class="iconbtn" type="button" data-action="delete-pair" data-game="${game}" data-id="${p.id}" title="Eliminar">✕</button>
-        </form>`).join('') + `</div>
-        <p style="font-size:11.5px;color:#7c8598;margin-top:8px;">La organización asigna el grupo de cada ${individual?'jugador':'pareja'} (requiere PIN).</p>`;
-    }
-    html += `</div>`;
-  }
-  html += `<div style="text-align:center;"><button class="btn secondary small" data-action="add-group" data-game="${game}">+ Añadir grupo</button></div>`;
-  return html;
-}
-
-function renderGroups(game){
-  const g = state.games[game];
-  const individual = isIndividual(game);
-  let html = '';
-  if(g.pairs.length === 0){
-    return `<div class="card"><div class="empty">Añade ${individual?'jugadores':'parejas'} primero en la pestaña «${individual?'Jugadores':'Parejas'}» para poder registrar resultados de grupo.</div></div>`;
-  }
-  if(game === 'chinchon'){
-    return renderChinchonMesas(game);
-  }
-  if(g.groups.length > 1){
-    const globalStandings = computeGlobalStandings(game);
-    if(globalStandings.length){
-      const parchis = isParchis(game);
-      const champ = getChampion(game);
-      html += `<div class="card"><h2>🏆 Clasificación general (todos los grupos)</h2>
-      <table class="standings"><thead><tr>
-        <th>${individual?'Jugador':'Pareja'}</th><th>Grupo</th><th>PJ</th><th>G</th>${parchis ? '<th>Fichas fuera</th>' : '<th>PF</th><th>PC</th><th>Dif</th>'}
-      </tr></thead><tbody>` + globalStandings.map((s,i) => parchis
-        ? `<tr>${i===0?'<td>🥇 '+esc(s.nombre)+'</td>':'<td>'+esc(s.nombre)+'</td>'}<td>${esc(s.grupo)}</td><td>${s.pj}</td><td>${s.g}</td><td>${s.pf}</td></tr>`
-        : `<tr>${i===0?'<td>🥇 '+esc(s.nombre)+'</td>':'<td>'+esc(s.nombre)+'</td>'}<td>${esc(s.grupo)}</td><td>${s.pj}</td><td>${s.g}</td><td>${s.pf}</td><td>${s.pc}</td><td>${s.pf-s.pc>0?'+':''}${s.pf-s.pc}</td></tr>`
-      ).join('') + `</tbody></table>
-      <div class="note" style="margin-top:8px;">${champ ? `🏆 <strong>${esc(champ)}</strong> es ${individual?'el ganador':'la pareja ganadora'} del torneo con la mejor puntuación global.` : 'Suma los puntos de todas las partidas jugadas por cada '+(individual?'jugador':'pareja')+' en su grupo. Cuando se completen todos los partidos de todos los grupos, el primero de esta tabla será el ganador del torneo.'}</div>
-      </div>`;
-    }
-  }
-  g.groups.forEach(gr => {
-    const pairsInGroup = g.pairs.filter(p => p.grupo === gr);
-    const standings = computeStandings(game, gr);
-    const matches = g.groupMatches.filter(m => m.grupo === gr);
-    const pending = matches.filter(m => !m.played);
-    const played = matches.filter(m => m.played);
-    html += `<div class="card"><h2>Grupo ${gr}</h2>`;
-    if(pairsInGroup.length < 2){
-      html += `<div class="empty">Se necesitan al menos 2 ${individual?'jugadores':'parejas'} en este grupo.</div></div>`;
-      return;
-    }
-    const parchis = isParchis(game);
-    html += `<table class="standings"><thead><tr>
-      <th>${individual?'Jugador':'Pareja'}</th><th>PJ</th><th>G</th>${parchis ? '<th>Fichas fuera</th>' : '<th>PF</th><th>PC</th><th>Dif</th>'}
-    </tr></thead><tbody>`;
-    standings.forEach(s => {
-      html += parchis
-        ? `<tr><td>${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td><td>${s.pf}</td></tr>`
-        : `<tr><td>${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td><td>${s.pf}</td><td>${s.pc}</td><td>${s.pf-s.pc>0?'+':''}${s.pf-s.pc}</td></tr>`;
-    });
-    html += `</tbody></table>`;
-
-    const totalPosible = pairsInGroup.length * (pairsInGroup.length - 1) / 2;
-    if(matches.length < totalPosible){
-      html += `<button class="btn secondary small" data-action="generate-calendar" data-game="${game}" data-grupo="${gr}">📅 Generar calendario (todos contra todos)</button>`;
-    }
-
-    if(pending.length){
-      html += `<h3 style="margin-top:14px;">Partidos por jugar</h3><div class="matchlist">` + pending.map(m => `
-        <div class="matchrow" style="flex-direction:column;align-items:stretch;gap:8px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-            <span class="names">${esc(pairName(game,m.pair1))} vs ${esc(pairName(game,m.pair2))}</span>
-            <button class="iconbtn" type="button" data-action="delete-groupmatch" data-game="${game}" data-id="${m.id}">✕</button>
-          </div>
-          <form data-action="set-match-date" data-game="${game}" data-id="${m.id}" style="display:flex;gap:6px;align-items:center;">
-            <span style="font-size:12px;color:#54607a;">📅</span>
-            <input type="date" name="fecha" value="${esc(m.fecha||'')}" style="flex:1;">
-            <button class="btn secondary small" type="submit">Guardar fecha</button>
-          </form>
-          <form data-action="enter-result" data-game="${game}" data-id="${m.id}" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-            ${parchis ? `
-            <select name="ganador" style="flex:0 0 auto;">
-              <option value="pair1">${esc(pairName(game,m.pair1))}</option>
-              <option value="pair2">${esc(pairName(game,m.pair2))}</option>
-            </select>
-            <input type="number" name="fichasFuera" placeholder="Fichas fuera" min="0" style="width:120px;flex:0 0 auto;" required>
-            ` : `
-            <input type="number" name="score1" placeholder="Pts" style="width:60px;flex:0 0 auto;" required>
-            <span>–</span>
-            <input type="number" name="score2" placeholder="Pts" style="width:60px;flex:0 0 auto;" required>
-            `}
-            <button class="btn small" type="submit">Guardar resultado</button>
-          </form>
-        </div>`).join('') + `</div>`;
-    }
-
-    if(played.length){
-      html += `<h3 style="margin-top:14px;">Jugados</h3><div class="matchlist">` + played.map(m => parchis ? `
-        <div class="matchrow">
-          <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}<span class="win">🏆 ${esc(pairName(game, m.score1>m.score2?m.pair1:m.pair2))}</span> gana a ${esc(pairName(game, m.score1>m.score2?m.pair2:m.pair1))}</span>
-          <span class="score">+${m.fichasFuera||0} fichas</span>
-          <button class="iconbtn" data-action="edit-groupmatch" data-game="${game}" data-id="${m.id}">✏️</button>
-          <button class="iconbtn" data-action="delete-groupmatch" data-game="${game}" data-id="${m.id}">✕</button>
-        </div>` : `
-        <div class="matchrow">
-          <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}${m.score1>m.score2?'<span class=\"win\">':''}${esc(pairName(game,m.pair1))}${m.score1>m.score2?'</span>':''}
-            vs
-            ${m.score2>m.score1?'<span class=\"win\">':''}${esc(pairName(game,m.pair2))}${m.score2>m.score1?'</span>':''}</span>
-          <span class="score">${m.score1} – ${m.score2}</span>
-          <button class="iconbtn" data-action="edit-groupmatch" data-game="${game}" data-id="${m.id}">✏️</button>
-          <button class="iconbtn" data-action="delete-groupmatch" data-game="${game}" data-id="${m.id}">✕</button>
-        </div>`).join('') + `</div>`;
-    }
-
-    const pairOptions = pairsInGroup.map(p => `<option value="${p.id}">${esc(pairDisplayName(p))}</option>`).join('');
-    html += `<h3 style="margin-top:14px;">Añadir partido suelto</h3>
-    <form class="row" data-action="add-groupmatch" data-game="${game}" data-grupo="${gr}">
-      <div class="field"><label>${individual?'Jugador 1':'Pareja 1'}</label><select name="pair1" required>${pairOptions}</select></div>
-      ${parchis ? '' : `<div class="field" style="flex:0 0 70px;"><label>Pts</label><input type="number" name="score1" required></div>`}
-      <div class="field"><label>${individual?'Jugador 2':'Pareja 2'}</label><select name="pair2" required>${pairOptions}</select></div>
-      ${parchis ? `
-      <div class="field"><label>Ganadora</label><select name="ganador" required><option value="pair1">Pareja 1 (arriba)</option><option value="pair2">Pareja 2 (abajo)</option></select></div>
-      <div class="field" style="flex:0 0 130px;"><label>Fichas fuera</label><input type="number" name="fichasFuera" min="0" required></div>
-      ` : `<div class="field" style="flex:0 0 70px;"><label>Pts</label><input type="number" name="score2" required></div>`}
-      <div class="field" style="flex:0 0 150px;"><label>Fecha (opcional)</label><input type="date" name="fecha"></div>
-      <button class="btn" type="submit">Guardar</button>
-    </form>`;
-    html += `</div>`;
-  });
-  return html;
-}
-
-function renderKnockout(game){
-  const g = state.games[game];
-  const individual = isIndividual(game);
-  const champ = getChampion(game);
-  let html = '';
-  if(champ){
-    html += `<div class="champion-banner"><div class="label">${individual?'Campeón':'Campeones'} ${GAMES[game].name}</div><div class="name">🏆 ${esc(champ)}</div></div>`;
-  }
-  const assignedPairs = g.pairs.filter(p => p.grupo);
-  if(assignedPairs.length < 2){
-    return html + `<div class="card"><div class="empty">Necesitas al menos 2 ${individual?'jugadores':'parejas'} asignad${individual?'os':'as'} a un grupo para crear cruces de eliminatoria.</div></div>`;
-  }
-  const parchis = isParchis(game);
-  const pairOptions = assignedPairs.map(p => `<option value="${p.id}">${esc(pairDisplayName(p))} (Grupo ${p.grupo})</option>`).join('');
-  html += `<div class="card">
-    <h2>Añadir cruce</h2>
-    <form class="row" data-action="add-komatch" data-game="${game}">
-      <div class="field" style="flex:1 1 140px;">
-        <label>Ronda</label>
-        <select name="ronda">${ROUND_ORDER.map(r=>`<option value="${r}">${r}</option>`).join('')}</select>
-      </div>
-      <div class="field"><label>${individual?'Jugador 1':'Pareja 1'}</label><select name="pair1" required>${pairOptions}</select></div>
-      ${parchis ? '' : `<div class="field" style="flex:0 0 70px;"><label>Pts</label><input type="number" name="score1" required></div>`}
-      <div class="field"><label>${individual?'Jugador 2':'Pareja 2'}</label><select name="pair2" required>${pairOptions}</select></div>
-      ${parchis ? `
-      <div class="field"><label>Ganadora</label><select name="ganador" required><option value="pair1">${individual?'Jugador 1':'Pareja 1'} (arriba)</option><option value="pair2">${individual?'Jugador 2':'Pareja 2'} (abajo)</option></select></div>
-      ` : `<div class="field" style="flex:0 0 70px;"><label>Pts</label><input type="number" name="score2" required></div>`}
-      <div class="field" style="flex:0 0 150px;"><label>Fecha (opcional)</label><input type="date" name="fecha"></div>
-      <button class="btn" type="submit">Guardar cruce</button>
-    </form>
-  </div>`;
-
-  const byRound = {};
-  g.koMatches.forEach(m => { (byRound[m.ronda] = byRound[m.ronda] || []).push(m); });
-  const roundsPresent = ROUND_ORDER.filter(r => byRound[r] && byRound[r].length);
-  const defaultStartIdx = assignedPairs.length >= 8 ? 0 : (assignedPairs.length >= 4 ? 1 : 2);
-  const bracketHtml = renderBracketTree(game, byRound, defaultStartIdx);
-  if(bracketHtml){
-    html += `<div class="card bracket-card"><div class="bracket-scroll">${bracketHtml}</div></div>`;
-  } else if(roundsPresent.length === 0){
-    html += `<div class="card"><div class="empty">Todavía no hay cruces registrados.</div></div>`;
-  } else {
-    html += `<div class="card">`;
-    roundsPresent.forEach(r => {
-      html += `<div class="ko-round"><h4>${r}</h4><div class="matchlist">`;
-      byRound[r].forEach(m => {
-        if(parchis){
-          const winner = m.score1>m.score2 ? m.pair1 : m.pair2;
-          const loser = m.score1>m.score2 ? m.pair2 : m.pair1;
-          html += `<div class="matchrow">
-            <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}<span class="win">🏆 ${esc(pairName(game,winner))}</span> gana a ${esc(pairName(game,loser))}</span>
-            <button class="iconbtn" data-action="edit-komatch" data-game="${game}" data-id="${m.id}">✏️</button>
-            <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
-          </div>`;
-        } else {
-          html += `<div class="matchrow">
-            <span class="names">${m.fecha ? `<span style="font-size:11.5px;color:#54607a;">📅 ${esc(m.fecha)} · </span>` : ''}${m.score1>m.score2?'<span class=\"win\">':''}${esc(pairName(game,m.pair1))}${m.score1>m.score2?'</span>':''}
-              vs
-              ${m.score2>m.score1?'<span class=\"win\">':''}${esc(pairName(game,m.pair2))}${m.score2>m.score1?'</span>':''}</span>
-            <span class="score">${m.score1} – ${m.score2}</span>
-            <button class="iconbtn" data-action="edit-komatch" data-game="${game}" data-id="${m.id}">✏️</button>
-            <button class="iconbtn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}">✕</button>
-          </div>`;
-        }
-      });
-      html += `</div></div>`;
-    });
-    html += `</div>`;
-  }
-  return html;
-}
-
-function bracketMatchBox(game, m){
-  if(!m) return `<div class="bracket-match empty">Por jugar</div>`;
-  const parchis = isParchis(game);
-  const p1win = m.score1 > m.score2;
-  const p2win = m.score2 > m.score1;
-  return `<div class="bracket-match">
-    <div class="bracket-actions">
-      <button class="iconbtn bracket-icn" data-action="edit-komatch" data-game="${game}" data-id="${m.id}" title="Editar">✏️</button>
-      <button class="iconbtn bracket-icn" data-action="delete-komatch" data-game="${game}" data-id="${m.id}" title="Eliminar">✕</button>
-    </div>
-    <div class="bside ${p1win?'win':''}"><span class="bname">${esc(pairName(game,m.pair1))}</span>${parchis?'':`<span class="bscore">${m.score1}</span>`}</div>
-    <div class="bside ${p2win?'win':''}"><span class="bname">${esc(pairName(game,m.pair2))}</span>${parchis?'':`<span class="bscore">${m.score2}</span>`}</div>
-    ${parchis && m.fichasFuera!=null ? `<div class="bmeta">🏆 +${m.fichasFuera} fichas</div>` : ''}
-    ${m.fecha ? `<div class="bmeta">📅 ${esc(m.fecha)}</div>` : ''}
-  </div>`;
-}
-
-function bracketColumn(game, matches){
-  return `<div class="bracket-round">${matches.map(m => bracketMatchBox(game, m)).join('')}</div>`;
-}
-
-// Builds a connected, mirrored bracket tree (like a classic two-sided knockout diagram).
-// Starts at defaultStartIdx (sized from how many pairs are assigned: 0=Cuartos for 8+, 1=Semifinal
-// for 4-7, 2=Final for 2-3) — or earlier, if real matches already exist in an earlier round — and
-// pads any not-yet-played rounds with empty "por jugar" placeholders down to the Final, so the full
-// bracket shape is visible from the very start and fills in as results come in. Returns null
-// (signalling the caller to fall back to the plain list) when real match counts don't fit that shape.
-function renderBracketTree(game, byRound, defaultStartIdx){
-  const expectedByIdx = [4, 2, 1];
-  const realStartIdx = ROUND_ORDER.findIndex(r => (byRound[r]||[]).length > 0);
-  const startIdx = realStartIdx === -1 ? defaultStartIdx : Math.min(defaultStartIdx, realStartIdx);
-  if(startIdx == null || startIdx < 0) return null;
-  const firstReal = byRound[ROUND_ORDER[startIdx]] || [];
-  if(firstReal.length !== 0 && firstReal.length !== expectedByIdx[startIdx]) return null;
-
-  const roundMatches = [];
-  for(let idx = startIdx; idx < ROUND_ORDER.length; idx++){
-    const expected = expectedByIdx[idx];
-    const real = byRound[ROUND_ORDER[idx]] || [];
-    if(real.length === expected) roundMatches.push(real);
-    else if(real.length === 0) roundMatches.push(new Array(expected).fill(null));
-    else return null; // partial/mismatched round — ambiguous, fall back to the plain list
-  }
-
-  const k = roundMatches.length;
-  const finalMatch = roundMatches[k-1][0];
-  const finalCol = `<div class="bracket-round bracket-final">${bracketMatchBox(game, finalMatch)}</div>`;
-  if(k === 1){
-    return `<div class="bracket bracket-k1">${finalCol}</div>`;
-  }
-
-  let leftHtml = '';
-  for(let i=0;i<k-1;i++){
-    const matches = roundMatches[i];
-    const half = matches.length/2;
-    const left = matches.slice(0, half);
-    const isLast = i === k-2; // innermost round before the Final: always 1 match per side
-    leftHtml += bracketColumn(game, left);
-    leftHtml += `<div class="bracket-connector ${isLast?'c-1to1':'c-pair'}"></div>`;
-  }
-
-  let rightHtml = '';
-  for(let i=k-2;i>=0;i--){
-    const matches = roundMatches[i];
-    const half = matches.length/2;
-    const right = matches.slice(half);
-    const isLast = i === k-2;
-    rightHtml += `<div class="bracket-connector ${isLast?'c-1to1':'c-pair'} mirror"></div>`;
-    rightHtml += bracketColumn(game, right);
-  }
-
-  return `<div class="bracket">${leftHtml}${finalCol}${rightHtml}</div>`;
-}
-
-function renderAjustes(game){
-  const s = state.games[game].settings;
-  const formato = s.formato || 'grupos_eliminatoria';
-  const FORMATO_LABELS = { grupos: 'Solo grupos (liguilla)', eliminatoria: 'Solo eliminatoria directa', grupos_eliminatoria: 'Grupos + eliminatoria' };
-  const hasAny = s.fecha || s.hora || s.lugar || s.notas;
-  let html = `<div class="card">
-    <h2>Ajustes de ${GAMES[game].name}</h2>
-    <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">Fecha, hora, lugar y formato del torneo. Solo la organización puede cambiarlos (PIN).</p>`;
-  html += `<table class="standings" style="margin-bottom:14px;"><tbody>
-      <tr><td>Formato</td><td style="text-align:right;">${esc(FORMATO_LABELS[formato])}</td></tr>
-      ${s.fecha ? `<tr><td>Fecha</td><td style="text-align:right;">${esc(s.fecha)}</td></tr>` : ''}
-      ${s.hora ? `<tr><td>Hora</td><td style="text-align:right;">${esc(s.hora)}</td></tr>` : ''}
-      ${s.lugar ? `<tr><td>Lugar</td><td style="text-align:right;">${esc(s.lugar)}</td></tr>` : ''}
-      ${s.notas ? `<tr><td>Notas</td><td style="text-align:right;">${esc(s.notas)}</td></tr>` : ''}
-    </tbody></table>`;
-  html += `<form data-action="save-settings" data-game="${game}">
-      <div class="row">
-        <div class="field" style="flex:1 1 100%;">
-          <label>Formato del torneo</label>
-          <select name="formato">
-            <option value="grupos_eliminatoria" ${formato==='grupos_eliminatoria'?'selected':''}>Grupos + eliminatoria</option>
-            <option value="grupos" ${formato==='grupos'?'selected':''}>Solo grupos (liguilla)</option>
-            <option value="eliminatoria" ${formato==='eliminatoria'?'selected':''}>Solo eliminatoria directa</option>
-          </select>
-        </div>
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <div class="field"><label>Fecha</label><input type="date" name="fecha" value="${esc(s.fecha)}"></div>
-        <div class="field"><label>Hora</label><input type="time" name="hora" value="${esc(s.hora)}"></div>
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <div class="field"><label>Lugar</label><input name="lugar" value="${esc(s.lugar)}" placeholder="Ej. Casal Faller"></div>
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <div class="field"><label>Notas</label><input name="notas" value="${esc(s.notas)}" placeholder="Ej. Dos mejores de tres"></div>
-      </div>
-      <button class="btn" type="submit" style="margin-top:10px;">Guardar ajustes</button>
-    </form>
-  </div>`;
+  html += `<div class="chips">` + g.pairs.map(p => `
+    <span class="chip">${unlocked && phonesLine(p) ? `<span style="display:flex;flex-direction:column;">${esc(pairDisplayName(p))}${phonesLine(p)}</span>` : esc(pairDisplayName(p))}
+      <button class="iconbtn" data-action="edit-pair" data-game="${game}" data-id="${p.id}" title="Editar">✏️</button>
+      <button class="iconbtn" data-action="delete-pair" data-game="${game}" data-id="${p.id}" title="Eliminar">✕</button>
+    </span>`).join('') + `</div>
+    <p style="font-size:11.5px;color:#7c8598;margin-top:8px;">Las mesas se forman por sorteo en la pestaña «Mesas».</p></div>`;
   return html;
 }
 
@@ -1328,60 +946,10 @@ document.addEventListener('click', e => {
   const subBtn = e.target.closest('[data-subtab]');
   if(subBtn){ gameSubTab[subBtn.dataset.game] = subBtn.dataset.subtab; render(); return; }
 
-  const addGroupBtn = e.target.closest('[data-action="add-group"]');
-  if(addGroupBtn){
-    const run = () => {
-      const game = addGroupBtn.dataset.game;
-      const groups = state.games[game].groups;
-      const nextCode = String.fromCharCode(65 + groups.length);
-      groups.push(nextCode);
-      saveData(); render();
-    };
-    unlocked ? run() : showPinModal(run);
-    return;
-  }
-
-  const genCalBtn = e.target.closest('[data-action="generate-calendar"]');
-  if(genCalBtn){
-    const run = () => {
-      const game = genCalBtn.dataset.game;
-      const grupo = genCalBtn.dataset.grupo;
-      const g = state.games[game];
-      const pairsInGroup = g.pairs.filter(p => p.grupo === grupo);
-      const existing = new Set(g.groupMatches.filter(m => m.grupo === grupo).map(m => [m.pair1, m.pair2].sort().join('|')));
-      for(let i = 0; i < pairsInGroup.length; i++){
-        for(let j = i+1; j < pairsInGroup.length; j++){
-          const key = [pairsInGroup[i].id, pairsInGroup[j].id].sort().join('|');
-          if(existing.has(key)) continue;
-          g.groupMatches.push({ id: uid(), grupo, pair1: pairsInGroup[i].id, pair2: pairsInGroup[j].id, score1: null, score2: null, played: false, fecha: null });
-        }
-      }
-      saveData(); render();
-    };
-    unlocked ? run() : showPinModal(run);
-    return;
-  }
-
   const editPair = e.target.closest('[data-action="edit-pair"]');
   if(editPair){
     const { game, id } = editPair.dataset;
     const run = () => showEditPairModal(game, id);
-    unlocked ? run() : showPinModal(run);
-    return;
-  }
-
-  const editGm = e.target.closest('[data-action="edit-groupmatch"]');
-  if(editGm){
-    const { game, id } = editGm.dataset;
-    const run = () => showEditMatchModal(game, 'group', id);
-    unlocked ? run() : showPinModal(run);
-    return;
-  }
-
-  const editKo = e.target.closest('[data-action="edit-komatch"]');
-  if(editKo){
-    const { game, id } = editKo.dataset;
-    const run = () => showEditMatchModal(game, 'ko', id);
     unlocked ? run() : showPinModal(run);
     return;
   }
@@ -1391,61 +959,42 @@ document.addEventListener('click', e => {
     const run = () => {
       const {game, id} = delPair.dataset;
       const g = state.games[game];
+      const enSorteo = (g.rondas||[]).some(r => r.mesas.some(m => m.jugadores.includes(id)));
+      if(enSorteo && !confirm('Ya está en el sorteo de rondas. Si lo eliminas se borrarán todas las rondas y resultados de este torneo y habrá que repetir el sorteo. ¿Continuar?')) return;
       g.pairs = g.pairs.filter(p => p.id !== id);
-      g.groupMatches = g.groupMatches.filter(m => m.pair1 !== id && m.pair2 !== id);
-      g.koMatches = g.koMatches.filter(m => m.pair1 !== id && m.pair2 !== id);
+      if(enSorteo) g.rondas = [];
       saveData(); render();
     };
     unlocked ? run() : showPinModal(run);
     return;
   }
 
-  const delGm = e.target.closest('[data-action="delete-groupmatch"]');
-  if(delGm){
-    const run = () => {
-      const {game, id} = delGm.dataset;
-      state.games[game].groupMatches = state.games[game].groupMatches.filter(m => m.id !== id);
-      saveData(); render();
-    };
-    unlocked ? run() : showPinModal(run);
-    return;
-  }
-
-  const delKo = e.target.closest('[data-action="delete-komatch"]');
-  if(delKo){
-    const run = () => {
-      const {game, id} = delKo.dataset;
-      state.games[game].koMatches = state.games[game].koMatches.filter(m => m.id !== id);
-      saveData(); render();
-    };
-    unlocked ? run() : showPinModal(run);
-    return;
-  }
-
-  const sorteoBtn = e.target.closest('[data-action="chinchon-sorteo"]');
+  const sorteoBtn = e.target.closest('[data-action="sorteo"]');
   if(sorteoBtn){
     const game = sorteoBtn.dataset.game;
-    const inputEl = document.getElementById('chinchonRondasInput');
+    const inputEl = document.getElementById('rondasInput');
     let R = parseInt(inputEl && inputEl.value, 10);
     if(!R || R < 1) R = 9;
-    R = Math.min(R, 20);
+    R = Math.min(R, 30);
     const run = () => {
       const g = state.games[game];
-      if(g.pairs.length < 4 || g.pairs.length % 4 !== 0){
-        alert('Para hacer el sorteo de mesas necesitas un número de jugadores múltiplo de 4 (mínimo 4).');
+      const k = tableSize(game);
+      if(g.pairs.length < k || g.pairs.length % k !== 0){
+        alert(isIndividual(game) ? 'Para hacer el sorteo necesitas un número de jugadores múltiplo de 4 (mínimo 4).' : 'Para hacer el sorteo necesitas un número par de parejas (mínimo 2).');
         return;
       }
-      const previas = g.chinchonRondas || [];
+      const previas = g.rondas || [];
       if(previas.length){
         const hayResultados = previas.some(r => r.mesas.some(m => m.jugada));
         const msg = hayResultados
-          ? 'Ya hay rondas con resultados. Si repites el sorteo se BORRARÁN todas las rondas y resultados actuales. ¿Continuar?'
+          ? 'Ya hay rondas con resultados. Si repites el sorteo se BORRARÁN todas las rondas, fechas y resultados actuales. ¿Continuar?'
           : 'Ya hay un sorteo hecho. ¿Repetirlo y sustituir las rondas actuales?';
         if(!confirm(msg)) return;
       }
-      const schedule = generateChinchonSchedule(g.pairs.map(p => p.id), R);
-      g.chinchonRondas = schedule.map((tables, r) => ({
-        id: uid(), numero: r + 1,
+      const fechasPrevias = previas.map(r => r.fecha || '');
+      const schedule = generateSchedule(g.pairs.map(p => p.id), R, k);
+      g.rondas = schedule.map((tables, r) => ({
+        id: uid(), numero: r + 1, fecha: fechasPrevias[r] || '',
         mesas: tables.map((js, i) => ({ id: uid(), label: `Mesa ${i+1}`, jugadores: js, jugada:false, ganadorId:null, puntos:null }))
       }));
       saveData(); render();
@@ -1454,13 +1003,50 @@ document.addEventListener('click', e => {
     return;
   }
 
-  const editMesaBtn = e.target.closest('[data-action="edit-chinchon-mesa"]');
-  if(editMesaBtn){
+  const editMesaBtn = e.target.closest('[data-action="edit-mesa"]');
+  if(editMesaBtn){ editingMesa = editMesaBtn.dataset.id; render(); return; }
+
+  if(e.target.closest('[data-action="cancel-edit-mesa"]')){ editingMesa = null; render(); return; }
+
+  const editJugBtn = e.target.closest('[data-action="edit-mesa-jugadores"]');
+  if(editJugBtn){
+    const { game, ronda, id } = editJugBtn.dataset;
+    const run = () => showEditMesaModal(game, ronda, id);
+    unlocked ? run() : showPinModal(run);
+    return;
+  }
+
+  const delRondaBtn = e.target.closest('[data-action="delete-ronda"]');
+  if(delRondaBtn){
     const run = () => {
-      const {game, ronda, id} = editMesaBtn.dataset;
-      const r = (state.games[game].chinchonRondas||[]).find(r => r.id === ronda);
-      const mesa = r && r.mesas.find(m => m.id === id);
-      if(mesa){ mesa.jugada = false; mesa.ganadorId = null; mesa.puntos = null; }
+      const { game, id } = delRondaBtn.dataset;
+      const g = state.games[game];
+      const r = (g.rondas||[]).find(r => r.id === id);
+      if(!r) return;
+      const msg = r.mesas.some(m => m.jugada)
+        ? `La ronda ${r.numero} tiene resultados guardados. ¿Eliminarla igualmente?`
+        : `¿Eliminar la ronda ${r.numero}?`;
+      if(!confirm(msg)) return;
+      g.rondas = g.rondas.filter(x => x.id !== id);
+      g.rondas.sort((a,b) => a.numero - b.numero).forEach((x, i) => { x.numero = i + 1; });
+      editingMesa = null;
+      saveData(); render();
+    };
+    unlocked ? run() : showPinModal(run);
+    return;
+  }
+
+  const borrarBtn = e.target.closest('[data-action="borrar-sorteo"]');
+  if(borrarBtn){
+    const run = () => {
+      const g = state.games[borrarBtn.dataset.game];
+      const hayRes = (g.rondas||[]).some(r => r.mesas.some(m => m.jugada));
+      const msg = hayRes
+        ? 'Se borrarán TODAS las rondas, fechas y resultados de este torneo (las inscripciones se mantienen). ¿Continuar?'
+        : '¿Borrar el sorteo y todas sus rondas? (las inscripciones se mantienen)';
+      if(!confirm(msg)) return;
+      g.rondas = [];
+      editingMesa = null;
       saveData(); render();
     };
     unlocked ? run() : showPinModal(run);
@@ -1484,7 +1070,7 @@ document.addEventListener('submit', e => {
     const j1telefono = (fd.get('j1telefono')||'').trim();
     const j2telefono = individual ? '' : (fd.get('j2telefono')||'').trim();
     if(!j1nombre || (!individual && !j2nombre)) return;
-    state.games[game].pairs.push({ id: uid(), j1nombre, j2nombre, j1telefono, j2telefono, grupo: null });
+    state.games[game].pairs.push({ id: uid(), j1nombre, j2nombre, j1telefono, j2telefono });
     form.reset();
     saveData();
     render();
@@ -1493,67 +1079,9 @@ document.addEventListener('submit', e => {
 
   // Everything else here is organization-only.
   const run = () => {
-    if(action === 'assign-group'){
-      const id = form.dataset.id;
-      const grupo = fd.get('grupo');
-      const p = state.games[game].pairs.find(p => p.id === id);
-      if(p) p.grupo = grupo;
-    }
-
-    if(action === 'save-settings'){
-      state.games[game].settings = {
-        fecha: (fd.get('fecha')||'').trim(),
-        hora: (fd.get('hora')||'').trim(),
-        lugar: (fd.get('lugar')||'').trim(),
-        notas: (fd.get('notas')||'').trim(),
-        formato: (fd.get('formato')||'grupos_eliminatoria').trim()
-      };
-    }
-
-    if(action === 'add-groupmatch'){
-      const grupo = form.dataset.grupo;
-      const pair1 = fd.get('pair1'), pair2 = fd.get('pair2');
-      const fecha = (fd.get('fecha')||'').trim();
-      if(pair1 === pair2){ alert(isIndividual(game) ? 'Elige dos jugadores distintos.' : 'Elige dos parejas distintas.'); return; }
-      if(isParchis(game)){
-        const ganador = fd.get('ganador');
-        const fichasFuera = Number(fd.get('fichasFuera'))||0;
-        const score1 = ganador === 'pair1' ? 1 : 0;
-        const score2 = ganador === 'pair2' ? 1 : 0;
-        state.games[game].groupMatches.push({ id: uid(), grupo, pair1, pair2, score1, score2, fichasFuera, played: true, fecha });
-      } else {
-        const score1 = Number(fd.get('score1')), score2 = Number(fd.get('score2'));
-        state.games[game].groupMatches.push({ id: uid(), grupo, pair1, pair2, score1, score2, played: true, fecha });
-      }
-    }
-
-    if(action === 'enter-result'){
-      const id = form.dataset.id;
-      const m = state.games[game].groupMatches.find(m => m.id === id);
-      if(m){
-        if(isParchis(game)){
-          const ganador = fd.get('ganador');
-          m.score1 = ganador === 'pair1' ? 1 : 0;
-          m.score2 = ganador === 'pair2' ? 1 : 0;
-          m.fichasFuera = Number(fd.get('fichasFuera'))||0;
-        } else {
-          m.score1 = Number(fd.get('score1'));
-          m.score2 = Number(fd.get('score2'));
-        }
-        m.played = true;
-      }
-    }
-
-    if(action === 'set-match-date'){
-      const id = form.dataset.id;
-      const fecha = (fd.get('fecha')||'').trim();
-      const m = state.games[game].groupMatches.find(m => m.id === id);
-      if(m){ m.fecha = fecha; }
-    }
-
-    if(action === 'chinchon-resultado'){
+    if(action === 'mesa-resultado'){
       const ronda = form.dataset.ronda, id = form.dataset.id;
-      const r = (state.games[game].chinchonRondas||[]).find(r => r.id === ronda);
+      const r = (state.games[game].rondas||[]).find(r => r.id === ronda);
       const mesa = r && r.mesas.find(m => m.id === id);
       const ganadorId = fd.get('ganador');
       const puntos = Number(fd.get('puntos'));
@@ -1562,22 +1090,12 @@ document.addEventListener('submit', e => {
         mesa.puntos = isNaN(puntos) ? 0 : puntos;
         mesa.jugada = true;
       }
+      editingMesa = null;
     }
 
-    if(action === 'add-komatch'){
-      const ronda = fd.get('ronda');
-      const pair1 = fd.get('pair1'), pair2 = fd.get('pair2');
-      const fecha = (fd.get('fecha')||'').trim();
-      if(pair1 === pair2){ alert(isIndividual(game) ? 'Elige dos jugadores distintos.' : 'Elige dos parejas distintas.'); return; }
-      if(isParchis(game)){
-        const ganador = fd.get('ganador');
-        const score1 = ganador === 'pair1' ? 1 : 0;
-        const score2 = ganador === 'pair2' ? 1 : 0;
-        state.games[game].koMatches.push({ id: uid(), ronda, pair1, pair2, score1, score2, played:true, fecha });
-      } else {
-        const score1 = Number(fd.get('score1')), score2 = Number(fd.get('score2'));
-        state.games[game].koMatches.push({ id: uid(), ronda, pair1, pair2, score1, score2, played:true, fecha });
-      }
+    if(action === 'set-ronda-fecha'){
+      const r = (state.games[game].rondas||[]).find(r => r.id === form.dataset.ronda);
+      if(r) r.fecha = (fd.get('fecha')||'').trim();
     }
 
     saveData();
