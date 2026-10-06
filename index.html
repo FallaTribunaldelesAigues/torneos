@@ -619,16 +619,14 @@ function pairKey(a,b){ return [a,b].sort().join('|'); }
 // Chinchón: mesas de 4 jugadores. Resto de torneos: mesas de 2 parejas.
 function tableSize(game){ return isIndividual(game) ? 4 : 2; }
 
-// Genera todas las rondas de golpe: R rondas con mesas de k, minimizando repeticiones de rivales
-function generateSchedule(ids, R, k){
-  // Si sobra gente para completar mesas de k (parejas impares) se añade un hueco vacío:
-  // quien comparte mesa con el hueco descansa esa ronda.
-  const pad = (k - ids.length % k) % k;
-  const slots = ids.concat(new Array(pad).fill(null));
-  const n = slots.length, T = n / k;
+// Genera todas las rondas de golpe. Mesas de k; si sobran jugadores (n no múltiplo de k) descansan, repartiendo
+// los descansos por igual. Minimiza repeticiones de rivales (recocido simulado).
+function generateSchedule(ids, R, k, maxMs){
+  const n = ids.length, T = Math.floor(n / k), nr = n - T * k;   // nr = nº que descansa en cada ronda
   const tablePairs = k * (k-1) / 2;
   const cnt = Array.from({length:n}, () => new Array(n).fill(0));
-  const tableOf = p => Math.floor(p / k);
+  const rest = new Array(n).fill(0);
+  const grp = p => p < T * k ? Math.floor(p / k) : -1;            // -1 = descansa
   function addRound(perm, d){
     for(let t = 0; t < T; t++){
       for(let i = 0; i < k; i++) for(let j = i+1; j < k; j++){
@@ -636,20 +634,22 @@ function generateSchedule(ids, R, k){
         cnt[a][b] += d; cnt[b][a] += d;
       }
     }
+    for(let p = T*k; p < n; p++) rest[perm[p]] += d;
   }
   function totalCost(){
     let c = 0;
-    for(let i = 0; i < n; i++) for(let j = i+1; j < n; j++) c += cnt[i][j] * cnt[i][j];
+    for(let i = 0; i < n; i++){ c += rest[i] * rest[i]; for(let j = i+1; j < n; j++) c += cnt[i][j] * cnt[i][j]; }
     return c;
   }
   const P = n * (n-1) / 2, S = R * T * tablePairs;
   const q = Math.floor(S / P), r = S % P;
-  const lowerBound = (P - r) * q * q + r * (q+1) * (q+1);
+  const SR = R * nr, q2 = Math.floor(SR / n), r2 = SR % n;
+  const lowerBound = (P - r) * q * q + r * (q+1) * (q+1) + (n - r2) * q2 * q2 + r2 * (q2+1) * (q2+1);
   const idx = Array.from({length:n}, (_,i) => i);
   let bestRounds = null, bestCost = Infinity;
   const t0 = Date.now();
-  for(let restart = 0; restart < 400 && bestCost > lowerBound && Date.now() - t0 < 2500; restart++){
-    for(let i = 0; i < n; i++) cnt[i].fill(0);
+  for(let restart = 0; restart < 400 && bestCost > lowerBound && Date.now() - t0 < (maxMs || 2500); restart++){
+    for(let i = 0; i < n; i++){ cnt[i].fill(0); rest[i] = 0; }
     const rounds = [];
     for(let x = 0; x < R; x++){ const perm = shuffleArray(idx); rounds.push(perm); addRound(perm, 1); }
     let cost = totalCost();
@@ -657,21 +657,20 @@ function generateSchedule(ids, R, k){
     for(let it = 0; it < 30000 && cost > lowerBound; it++){
       const perm = rounds[Math.floor(Math.random() * R)];
       const p = Math.floor(Math.random() * n), p2 = Math.floor(Math.random() * n);
-      if(tableOf(p) === tableOf(p2)) continue;
+      const ga = grp(p), gb = grp(p2);
+      if(ga === gb) continue;
       const a = perm[p], b = perm[p2];
       let delta = 0;
-      for(let i = 0; i < k; i++){
-        const x = perm[tableOf(p)*k+i], y = perm[tableOf(p2)*k+i];
-        if(x !== a){ delta += (-2*cnt[a][x] + 1) + (2*cnt[b][x] + 1); }
-        if(y !== b){ delta += (-2*cnt[b][y] + 1) + (2*cnt[a][y] + 1); }
-      }
+      if(ga >= 0) for(let i = 0; i < k; i++){ const x = perm[ga*k+i]; if(x !== a) delta += (-2*cnt[a][x] + 1) + (2*cnt[b][x] + 1); }
+      if(gb >= 0) for(let i = 0; i < k; i++){ const y = perm[gb*k+i]; if(y !== b) delta += (-2*cnt[b][y] + 1) + (2*cnt[a][y] + 1); }
+      if(ga < 0) delta += (-2*rest[a] + 1) + (2*rest[b] + 1);
+      if(gb < 0) delta += (-2*rest[b] + 1) + (2*rest[a] + 1);
       const temp = 0.7 * (1 - it / 30000) + 0.05;
       if(delta <= 0 || Math.random() < Math.exp(-delta / temp)){
-        for(let i = 0; i < k; i++){
-          const x = perm[tableOf(p)*k+i], y = perm[tableOf(p2)*k+i];
-          if(x !== a){ cnt[a][x]--; cnt[x][a]--; cnt[b][x]++; cnt[x][b]++; }
-          if(y !== b){ cnt[b][y]--; cnt[y][b]--; cnt[a][y]++; cnt[y][a]++; }
-        }
+        if(ga >= 0) for(let i = 0; i < k; i++){ const x = perm[ga*k+i]; if(x !== a){ cnt[a][x]--; cnt[x][a]--; cnt[b][x]++; cnt[x][b]++; } }
+        if(gb >= 0) for(let i = 0; i < k; i++){ const y = perm[gb*k+i]; if(y !== b){ cnt[b][y]--; cnt[y][b]--; cnt[a][y]++; cnt[y][a]++; } }
+        if(ga < 0){ rest[a]--; rest[b]++; }
+        if(gb < 0){ rest[b]--; rest[a]++; }
         perm[p] = b; perm[p2] = a;
         cost += delta;
         if(cost < bestCost){ bestCost = cost; bestRounds = rounds.map(pm => pm.slice()); }
@@ -679,14 +678,9 @@ function generateSchedule(ids, R, k){
     }
   }
   return bestRounds.map(perm => {
-    const mesas = [], descansa = [];
-    for(let t = 0; t < T; t++){
-      const reales = [];
-      for(let i = 0; i < k; i++){ const v = slots[perm[t*k+i]]; if(v !== null) reales.push(v); }
-      if(reales.length === k) mesas.push(reales);
-      else reales.forEach(v => descansa.push(v));
-    }
-    return { mesas, descansa };
+    const mesas = [];
+    for(let t = 0; t < T; t++) mesas.push(perm.slice(t*k, t*k+k).map(i => ids[i]));
+    return { mesas, descansa: perm.slice(T*k).map(i => ids[i]) };
   });
 }
 
@@ -759,6 +753,25 @@ function getChampion(game){
   return st[0].nombre;
 }
 
+// Rondas necesarias para que todos se enfrenten con todos al menos una vez
+const rondasCache = {};
+function calcRondasNecesarias(game){
+  const n = state.games[game].pairs.length, k = tableSize(game);
+  if(n < k) return null;
+  if(k === 2) return n % 2 === 0 ? n - 1 : n;          // parejas: todos contra todos exacto
+  const key = game + ':' + n;
+  if(rondasCache[key]) return rondasCache[key];
+  const ids = Array.from({length:n}, (_, i) => i), T = Math.floor(n / k), P = n * (n-1) / 2;
+  let R = Math.max(1, Math.ceil(P / (T * k * (k-1) / 2)));
+  for(; R < 30; R++){
+    const sc = generateSchedule(ids, R, k, 900), seen = new Set();
+    sc.forEach(r => r.mesas.forEach(m => { for(let i = 0; i < m.length; i++) for(let j = i+1; j < m.length; j++) seen.add(pairKey(m[i], m[j])); }));
+    if(seen.size >= P) break;
+  }
+  rondasCache[key] = R;
+  return R;
+}
+
 function renderMesas(game){
   const g = state.games[game];
   const individual = isIndividual(game);
@@ -784,18 +797,23 @@ function renderMesas(game){
   const n = g.pairs.length;
   const hayRondas = g.rondas.length > 0;
   html += `<div class="card"><h2>🎲 Mesas</h2>
-  <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">${individual ? 'Cada partida es de 4 jugadores.' : 'Cada partida enfrenta a dos parejas. Si el número de parejas es impar, en cada ronda descansa una.'} El sorteo reparte de una vez todas las rondas, rotando las mesas para que se enfrenten entre todos y se repitan lo menos posible. Cada ronda tiene su propia fecha.</p>
+  <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">${individual ? 'Cada partida es de 4 jugadores. Si sobran jugadores (no es múltiplo de 4), descansan por turnos.' : 'Cada partida enfrenta a dos parejas. Si el número de parejas es impar, en cada ronda descansa una.'} El sorteo reparte de una vez todas las rondas, rotando las mesas para que se enfrenten entre todos y se repitan lo menos posible. Cada ronda tiene su propia fecha.</p>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-    <label style="font-size:12.5px;">Rondas <input type="number" id="rondasInput" value="${hayRondas ? g.rondas.length : 9}" min="1" max="30" style="width:70px;"></label>
+    <label style="font-size:12.5px;">Rondas <input type="number" id="rondasInput" value="${hayRondas ? g.rondas.length : (!individual && n >= 2 ? (n % 2 === 0 ? n - 1 : n) : 9)}" min="1" max="30" style="width:70px;"></label>
+    <button class="btn secondary" type="button" data-action="calc-rondas" data-game="${game}" title="Calcula cuántas rondas hacen falta para que todos jueguen contra todos">🧮 Calcular rondas necesarias</button>
     <button class="btn" data-action="sorteo" data-game="${game}">🎲 ${hayRondas ? 'Repetir sorteo' : 'Sorteo de todas las rondas'}</button>
     ${hayRondas ? `<button class="btn secondary" data-action="borrar-sorteo" data-game="${game}">🗑 Borrar sorteo</button>` : ''}
-  </div>`;
-  const invalido = individual ? (n < 4 || n % 4 !== 0) : n < 2;
-  if(!individual && !invalido && n % 2 === 1){
-    html += `<p class="note" style="margin-top:10px;">😴 Hay ${n} parejas (número impar): en cada ronda descansa una, y el descanso se reparte entre todas. Para que todas se enfrenten entre sí hacen falta ${n} rondas.</p>`;
+  </div>
+  <div id="calcInfo" class="note" style="margin-top:8px;display:none;"></div>`;
+  const invalido = individual ? n < 4 : n < 2;
+  if(!invalido && n % k !== 0){
+    const nr = n % k;
+    html += individual
+      ? `<p class="note" style="margin-top:10px;">😴 Hay ${n} jugadores (no es múltiplo de 4): en cada ronda ${nr === 1 ? 'descansa 1 jugador' : 'descansan ' + nr + ' jugadores'}, y los descansos se reparten entre todos.</p>`
+      : `<p class="note" style="margin-top:10px;">😴 Hay ${n} parejas (número impar): en cada ronda descansa una, y el descanso se reparte entre todas. Para que todas se enfrenten entre sí hacen falta ${n} rondas.</p>`;
   }
   if(invalido){
-    html += `<p class="empty" style="margin-top:10px;">${individual ? `El número de jugadores apuntados (${n}) tiene que ser múltiplo de 4 para repartir mesas completas.` : 'Necesitas al menos 2 parejas apuntadas para repartir las mesas.'}</p>`;
+    html += `<p class="empty" style="margin-top:10px;">${individual ? `Necesitas al menos 4 jugadores apuntados (hay ${n}) para formar una mesa.` : 'Necesitas al menos 2 parejas apuntadas para repartir las mesas.'}</p>`;
   } else if(hayRondas){
     const cov = computeCoverage(game);
     if(cov.covered >= cov.total){
@@ -1077,6 +1095,22 @@ document.addEventListener('change', e => {
 });
 
 document.addEventListener('click', e => {
+  const calc = e.target.closest('[data-action="calc-rondas"]');
+  if(calc){
+    const game = calc.dataset.game, info = document.getElementById('calcInfo'), inp = document.getElementById('rondasInput');
+    const n = state.games[game].pairs.length, individual = isIndividual(game);
+    const mostrar = txt => { if(info){ info.style.display = 'block'; info.textContent = txt; } };
+    if(n < tableSize(game)){ mostrar(individual ? 'Necesitas al menos 4 jugadores apuntados.' : 'Necesitas al menos 2 parejas apuntadas.'); return; }
+    mostrar('🧮 Calculando…');
+    setTimeout(() => {
+      const R = calcRondasNecesarias(game);
+      if(inp) inp.value = R;
+      mostrar(individual
+        ? `🧮 Con ${n} jugadores bastan ${R} rondas para que todos coincidan en mesa con todos (mínimo encontrado). Ya está puesto en el campo «Rondas»: pulsa el sorteo.`
+        : `🧮 Con ${n} parejas hacen falta ${R} rondas para que todas se enfrenten entre sí${n % 2 ? ' (una descansa en cada ronda)' : ''}. Ya está puesto en el campo «Rondas»: pulsa el sorteo.`);
+    }, 30);
+    return;
+  }
   const tg = e.target.closest('[data-action="toggle-inscripciones"]');
   if(tg){
     const run = () => { const g = state.games[tg.dataset.game]; g.cerrado = !g.cerrado; saveData(); render(); };
@@ -1131,9 +1165,9 @@ document.addEventListener('click', e => {
       const g = state.games[game];
       const k = tableSize(game);
       const nIns = g.pairs.length;
-      const invalido = isIndividual(game) ? (nIns < 4 || nIns % 4 !== 0) : nIns < 2;
+      const invalido = isIndividual(game) ? nIns < 4 : nIns < 2;
       if(invalido){
-        alert(isIndividual(game) ? 'Para hacer el sorteo necesitas un número de jugadores múltiplo de 4 (mínimo 4).' : 'Para hacer el sorteo necesitas al menos 2 parejas.');
+        alert(isIndividual(game) ? 'Para hacer el sorteo necesitas al menos 4 jugadores.' : 'Para hacer el sorteo necesitas al menos 2 parejas.');
         return;
       }
       const previas = g.rondas || [];
