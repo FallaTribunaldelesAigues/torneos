@@ -954,6 +954,13 @@ function renderResumen(){
     </div>`;
   });
   html += `</div><div class="note">Cualquiera puede apuntarse a un torneo. Hacer el sorteo de mesas, meter resultados y poner fechas requiere el PIN de organización.</div>`;
+  html += `<div class="card" style="margin-top:14px;"><h2>💾 Copia de seguridad</h2>
+    <p style="font-size:12.5px;color:#54607a;margin:-6px 0 10px;">Descarga un archivo con todos los datos (inscritos, sorteos y resultados). Guárdalo en tu móvil u ordenador; si algún día se pierde algo, se restaura desde aquí. Se recomienda descargar una copia después de cada noche de torneo.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn" data-action="backup-download">⬇️ Descargar copia</button>
+      <button class="btn secondary" data-action="backup-restore">♻️ Restaurar copia…</button>
+      <input type="file" id="restoreFile" accept="application/json,.json" style="display:none;">
+    </div></div>`;
   return html;
 }
 
@@ -1013,7 +1020,60 @@ function renderParejasApuntadas(game){
 }
 
 // ---- event delegation ----
+// ---------- Copias de seguridad ----------
+function descargarCopia(prefijo){
+  const d = new Date(), z = n => String(n).padStart(2, '0');
+  const nombre = `${prefijo || 'torneos-copia'}-${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}.json`;
+  const blob = new Blob([JSON.stringify({ app: 'torneos-falla', version: 1, exportado: d.toISOString(), datos: state }, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = nombre;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+function restaurarCopia(texto){
+  let obj;
+  try{ obj = JSON.parse(texto); }catch(e){ alert('El archivo no es una copia válida.'); return; }
+  const datos = obj && obj.datos ? obj.datos : obj;
+  if(!datos || typeof datos !== 'object' || !datos.games || !Object.keys(GAMES).some(k => datos.games[k])){
+    alert('El archivo no parece una copia de seguridad de esta app.'); return;
+  }
+  const n = Object.keys(GAMES).reduce((s, k) => s + (((datos.games[k] || {}).pairs) || []).length, 0);
+  if(!confirm(`Se van a sustituir TODOS los datos actuales por los de la copia (${n} inscritos en total). Antes se descargará una copia de los datos actuales por seguridad. ¿Continuar?`)) return;
+  descargarCopia('torneos-antes-de-restaurar');
+  state = datos;
+  if(typeof normalizeState === 'function') normalizeState();
+  else Object.keys(GAMES).forEach(k => {
+    if(!state.games[k]) state.games[k] = defaultGameState();
+    const g = state.games[k];
+    if(!g.pairs) g.pairs = [];
+    if(!g.rondas) g.rondas = g.chinchonRondas || [];
+    delete g.chinchonRondas;
+    g.rondas.forEach(r => { if(r.fecha === undefined) r.fecha = ''; });
+  });
+  saveData(); render();
+  alert('Copia restaurada.');
+}
+
+document.addEventListener('change', e => {
+  if(e.target && e.target.id === 'restoreFile' && e.target.files && e.target.files[0]){
+    const file = e.target.files[0];
+    const rd = new FileReader();
+    rd.onload = () => restaurarCopia(String(rd.result));
+    rd.readAsText(file);
+    e.target.value = '';
+  }
+});
+
 document.addEventListener('click', e => {
+  const bk = e.target.closest('[data-action="backup-download"]');
+  if(bk){ descargarCopia(); return; }
+  const rs = e.target.closest('[data-action="backup-restore"]');
+  if(rs){
+    const run = () => { const f = document.getElementById('restoreFile'); if(f) f.click(); };
+    unlocked ? run() : showPinModal(run);
+    return;
+  }
   const tabBtn = e.target.closest('[data-tab]');
   if(tabBtn){ currentTab = tabBtn.dataset.tab; render(); return; }
 
