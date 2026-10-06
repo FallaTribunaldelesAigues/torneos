@@ -373,7 +373,7 @@ function phonesLine(p){
 }
 
 function defaultGameState(){
-  return { pairs: [], rondas: [] };
+  return { pairs: [], rondas: [], cerrado: false };
 }
 function defaultState(){
   const games = {};
@@ -923,7 +923,7 @@ function renderHome(){
   Object.entries(GAMES).forEach(([key,meta]) => {
     const g = state.games[key];
     const champ = getChampion(key);
-    const status = champ ? `🏆 ${esc(champ)}` : unitCount(key, g.pairs.length);
+    const status = champ ? `🏆 ${esc(champ)}` : unitCount(key, g.pairs.length) + (g.cerrado ? ' · 🔒 cerrado' : '');
     html += `<button class="homebtn" data-tab="${key}">
       <span class="bigdot" style="background:${meta.color}">${meta.icon}</span>
       <span class="gname">${meta.name}</span>
@@ -954,7 +954,7 @@ function renderResumen(){
     </div>`;
   });
   html += `</div><div class="note">Cualquiera puede apuntarse a un torneo. Hacer el sorteo de mesas, meter resultados y poner fechas requiere el PIN de organización.</div>`;
-  html += `<div class="card" style="margin-top:14px;"><h2>💾 Copia de seguridad</h2>
+  if(unlocked) html += `<div class="card" style="margin-top:14px;"><h2>💾 Copia de seguridad</h2>
     <p style="font-size:12.5px;color:#54607a;margin:-6px 0 10px;">Descarga un archivo con todos los datos (inscritos, sorteos y resultados). Guárdalo en tu móvil u ordenador; si algún día se pierde algo, se restaura desde aquí. Se recomienda descargar una copia después de cada noche de torneo.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn" data-action="backup-download">⬇️ Descargar copia</button>
@@ -983,7 +983,16 @@ function renderGamePage(game){
 
 function renderApuntarse(game){
   const individual = isIndividual(game);
-  let html = `<div class="card">
+  const cerrado = !!state.games[game].cerrado;
+  const toggle = `<button class="btn secondary small" data-action="toggle-inscripciones" data-game="${game}">${cerrado ? '🔓 Abrir inscripciones' : '🔒 Cerrar inscripciones'}</button>`;
+  if(cerrado && !unlocked){
+    return `<div class="card">
+      <h2>Inscripciones cerradas</h2>
+      <p style="font-size:13px;color:#54607a;margin:-6px 0 12px;">🔒 Ya no se admiten ${individual ? 'más jugadores' : 'más parejas'} en ${GAMES[game].name}. Si quieres apuntarte, habla con la organización.</p>
+      ${toggle}
+    </div>`;
+  }
+  let html = `<div class="card">${cerrado ? `<div class="note" style="margin:0 0 10px;">🔒 Inscripciones cerradas al público: solo la organización (con el PIN) puede apuntar ${individual ? 'jugadores' : 'parejas'}.</div>` : ''}
     <h2>Apúntate a ${GAMES[game].name}</h2>
     <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">${individual ? 'Se juega individual. Escribe tu nombre y apellidos.' : 'Se juega en parejas. Escribe el nombre y apellidos de los dos jugadores.'}</p>
     <form data-action="register-pair" data-game="${game}">
@@ -997,6 +1006,7 @@ function renderApuntarse(game){
       </div>`}
       <button class="btn" type="submit" style="margin-top:10px;">${individual ? 'Apuntarme' : 'Apuntar pareja'}</button>
     </form>
+    <div style="margin-top:12px;">${toggle}</div>
   </div>`;
   return html;
 }
@@ -1022,6 +1032,7 @@ function renderParejasApuntadas(game){
 // ---- event delegation ----
 // ---------- Copias de seguridad ----------
 function descargarCopia(prefijo){
+  if(!unlocked) return;
   const d = new Date(), z = n => String(n).padStart(2, '0');
   const nombre = `${prefijo || 'torneos-copia'}-${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}.json`;
   const blob = new Blob([JSON.stringify({ app: 'torneos-falla', version: 1, exportado: d.toISOString(), datos: state }, null, 1)], { type: 'application/json' });
@@ -1066,8 +1077,14 @@ document.addEventListener('change', e => {
 });
 
 document.addEventListener('click', e => {
+  const tg = e.target.closest('[data-action="toggle-inscripciones"]');
+  if(tg){
+    const run = () => { const g = state.games[tg.dataset.game]; g.cerrado = !g.cerrado; saveData(); render(); };
+    unlocked ? run() : showPinModal(run);
+    return;
+  }
   const bk = e.target.closest('[data-action="backup-download"]');
-  if(bk){ descargarCopia(); return; }
+  if(bk){ unlocked ? descargarCopia() : showPinModal(() => descargarCopia()); return; }
   const rs = e.target.closest('[data-action="backup-restore"]');
   if(rs){
     const run = () => { const f = document.getElementById('restoreFile'); if(f) f.click(); };
@@ -1206,6 +1223,7 @@ document.addEventListener('submit', e => {
     const j1telefono = (fd.get('j1telefono')||'').trim();
     const j2telefono = individual ? '' : (fd.get('j2telefono')||'').trim();
     if(!j1nombre || (!individual && !j2nombre)) return;
+    if(state.games[game].cerrado && !unlocked){ alert('Las inscripciones de este torneo están cerradas.'); render(); return; }
     state.games[game].pairs.push({ id: uid(), j1nombre, j2nombre, j1telefono, j2telefono });
     form.reset();
     saveData();
