@@ -116,8 +116,8 @@
     font-size:20px; margin:0 0 12px; display:flex; align-items:center; gap:8px; }
   .card h3{ font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:#54607a; margin:0 0 8px; font-weight:700;}
 
-  .subtabbar{ display:flex; gap:6px; margin-bottom:14px; }
-  .subtab{ flex:1; text-align:center; padding:8px 4px; border-radius:10px; border:none;
+  .subtabbar{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+  .subtab{ flex:1 1 auto; text-align:center; padding:8px 8px; border-radius:10px; border:none;
     background:var(--paper-dark); color:var(--ink); font-weight:600; font-size:13px; cursor:pointer;
     box-shadow:0 3px 8px rgba(0,0,0,.15); }
   .subtab.active{ background:var(--ink); color:var(--paper); }
@@ -789,69 +789,12 @@ function calcRondasNecesarias(game){
   return R;
 }
 
-function renderMesas(game){
+// Tarjeta de una ronda (fecha, mesas y resultados)
+function renderRondaCard(game, ronda){
   const g = state.games[game];
   const individual = isIndividual(game);
-  const k = tableSize(game);
-  const unidad = individual ? 'jugador' : 'pareja';
   const unidades = individual ? 'jugadores' : 'parejas';
-  if(!g.rondas) g.rondas = [];
-  if(g.pairs.length === 0){
-    return `<div class="card"><div class="empty">Añade ${unidades} primero en la pestaña «Apuntarse» para poder sortear las mesas.</div></div>`;
-  }
   let html = '';
-  const standings = computeStandings(game);
-  html += `<div class="card"><h2>🏆 Clasificación general</h2>
-  <table class="standings"><thead><tr><th>${individual?'Jugador':'Pareja'}</th><th>Partidas jugadas</th><th>Victorias</th>${usaCamas(game) ? '<th>Camas +</th><th>Camas −</th>' : game==='parchis' ? '<th>Fichas rivales fuera</th>' : '<th>Puntos</th>'}</tr></thead><tbody>` +
-  standings.map((s,i) => `<tr><td>${i===0 && s.g>0 ? '🥇 ' : ''}${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td>${usaCamas(game) ? `<td>${s.cf}</td><td>${s.cc}</td>` : game==='parchis' ? `<td>${s.fuera}</td>` : `<td>${s.puntos}</td>`}</tr>`).join('') +
-  `</tbody></table>
-  <div class="note" style="margin-top:8px;">${
-    usaCamas(game) ? `Gana quien más partidas haya ganado${game === 'truc' ? ' (una partida termina cuando una pareja llega a 2 camas)' : ''}. En caso de empate, gana la mejor diferencia de camas (ganadas − perdidas) y después quien más camas haya ganado.`
-    : game==='parchis' ? 'Gana quien más partidas haya ganado. En caso de empate a victorias, gana quien haya dejado más fichas del equipo rival sin meter en las partidas ganadas.'
-    : 'Gana quien más partidas haya ganado. En caso de empate a victorias, gana quien menos puntos acumule en las partidas ganadas.'}</div>
-  </div>`;
-
-  const n = g.pairs.length;
-  const hayRondas = g.rondas.length > 0;
-  html += `<div class="card"><h2>🎲 Mesas</h2>
-  <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">${individual ? 'Cada partida es de 4 jugadores. Si sobran jugadores (no es múltiplo de 4), descansan por turnos.' : 'Cada partida enfrenta a dos parejas. Si el número de parejas es impar, en cada ronda descansa una.'} El sorteo reparte de una vez todas las rondas, rotando las mesas para que se enfrenten entre todos y se repitan lo menos posible. Cada ronda tiene su propia fecha.</p>
-  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-    <label style="font-size:12.5px;">Rondas <input type="number" id="rondasInput" value="${hayRondas ? g.rondas.length : (!individual && n >= 2 ? (n % 2 === 0 ? n - 1 : n) : 9)}" min="1" max="30" style="width:70px;"></label>
-    <button class="btn secondary" type="button" data-action="calc-rondas" data-game="${game}" title="Calcula cuántas rondas hacen falta para que todos jueguen contra todos">🧮 Calcular rondas necesarias</button>
-    <button class="btn" data-action="sorteo" data-game="${game}">🎲 ${hayRondas ? 'Repetir sorteo' : 'Sorteo de todas las rondas'}</button>
-    ${hayRondas ? `<button class="btn secondary" data-action="borrar-sorteo" data-game="${game}">🗑 Borrar sorteo</button>` : ''}
-  </div>
-  <div id="calcInfo" class="note" style="margin-top:8px;display:none;"></div>`;
-  const invalido = individual ? n < 4 : n < 2;
-  if(!invalido && n % k !== 0){
-    const nr = n % k;
-    html += individual
-      ? `<p class="note" style="margin-top:10px;">😴 Hay ${n} jugadores (no es múltiplo de 4): en cada ronda ${nr === 1 ? 'descansa 1 jugador' : 'descansan ' + nr + ' jugadores'}, y los descansos se reparten entre todos.</p>`
-      : `<p class="note" style="margin-top:10px;">😴 Hay ${n} parejas (número impar): en cada ronda descansa una, y el descanso se reparte entre todas. Para que todas se enfrenten entre sí hacen falta ${n} rondas.</p>`;
-  }
-  if(invalido){
-    html += `<p class="empty" style="margin-top:10px;">${individual ? `Necesitas al menos 4 jugadores apuntados (hay ${n}) para formar una mesa.` : 'Necesitas al menos 2 parejas apuntadas para repartir las mesas.'}</p>`;
-  } else if(hayRondas){
-    const cov = computeCoverage(game);
-    if(cov.covered >= cov.total){
-      html += `<p class="note" style="margin-top:10px;">✅ Con estas ${g.rondas.length} rondas todos se enfrentan con todos al menos una vez.</p>`;
-    } else {
-      html += `<p class="note" style="margin-top:10px;">⚠️ Con ${g.rondas.length} rondas quedan ${cov.total - cov.covered} enfrentamientos sin cubrir (de ${cov.total}). ${individual ? 'Prueba con más rondas.' : `Para que todas las parejas se enfrenten entre sí hacen falta al menos ${n % 2 === 0 ? n-1 : n} rondas.`}</p>`;
-    }
-    const enSorteo = new Set();
-    g.rondas.forEach(r => { r.mesas.forEach(m => m.jugadores.forEach(id => enSorteo.add(id))); (r.descansa||[]).forEach(id => enSorteo.add(id)); });
-    const fuera = g.pairs.filter(p => !enSorteo.has(p.id)).length;
-    if(fuera){
-      html += `<p class="note" style="margin-top:6px;">⚠️ Hay ${fuera} inscripci${fuera===1?'ón posterior':'ones posteriores'} al sorteo que no ${fuera===1?'está':'están'} en ninguna mesa. Repite el sorteo para incluir${fuera===1?'la':'las'}.</p>`;
-    }
-  }
-  html += `</div>`;
-
-  const rondas = g.rondas.slice().sort((a,b) => a.numero - b.numero);
-  if(rondas.length === 0){
-    html += `<div class="card"><div class="empty">Todavía no se ha hecho el sorteo de rondas.</div></div>`;
-  }
-  rondas.forEach(ronda => {
     html += `<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
         <h2 style="margin:0;">Ronda ${ronda.numero}${ronda.fecha ? ' · ' + esc(fmtFecha(ronda.fecha)) : ''}</h2>
@@ -919,7 +862,80 @@ function renderMesas(game){
       html += `</div>`;
     });
     html += `</div>`;
-  });
+  return html;
+}
+
+function renderMesas(game){
+  const g = state.games[game];
+  const individual = isIndividual(game);
+  const k = tableSize(game);
+  const unidad = individual ? 'jugador' : 'pareja';
+  const unidades = individual ? 'jugadores' : 'parejas';
+  if(!g.rondas) g.rondas = [];
+  if(g.pairs.length === 0){
+    return `<div class="card"><div class="empty">Añade ${unidades} primero en la pestaña «Apuntarse» para poder sortear las mesas.</div></div>`;
+  }
+  let html = '';
+  const standings = computeStandings(game);
+  html += `<div class="card"><h2>🏆 Clasificación general</h2>
+  <table class="standings"><thead><tr><th>${individual?'Jugador':'Pareja'}</th><th>Partidas jugadas</th><th>Victorias</th>${usaCamas(game) ? '<th>Camas +</th><th>Camas −</th>' : game==='parchis' ? '<th>Fichas rivales fuera</th>' : '<th>Puntos</th>'}</tr></thead><tbody>` +
+  standings.map((s,i) => `<tr><td>${i===0 && s.g>0 ? '🥇 ' : ''}${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td>${usaCamas(game) ? `<td>${s.cf}</td><td>${s.cc}</td>` : game==='parchis' ? `<td>${s.fuera}</td>` : `<td>${s.puntos}</td>`}</tr>`).join('') +
+  `</tbody></table>
+  <div class="note" style="margin-top:8px;">${
+    usaCamas(game) ? `Gana quien más partidas haya ganado${game === 'truc' ? ' (una partida termina cuando una pareja llega a 2 camas)' : ''}. En caso de empate, gana la mejor diferencia de camas (ganadas − perdidas) y después quien más camas haya ganado.`
+    : game==='parchis' ? 'Gana quien más partidas haya ganado. En caso de empate a victorias, gana quien haya dejado más fichas del equipo rival sin meter en las partidas ganadas.'
+    : 'Gana quien más partidas haya ganado. En caso de empate a victorias, gana quien menos puntos acumule en las partidas ganadas.'}</div>
+  </div>`;
+
+  const n = g.pairs.length;
+  const hayRondas = g.rondas.length > 0;
+  html += `<div class="card"><h2>🎲 Mesas</h2>
+  <p style="font-size:12.5px;color:#54607a;margin:-6px 0 12px;">${individual ? 'Cada partida es de 4 jugadores. Si sobran jugadores (no es múltiplo de 4), descansan por turnos.' : 'Cada partida enfrenta a dos parejas. Si el número de parejas es impar, en cada ronda descansa una.'} El sorteo reparte de una vez todas las rondas, rotando las mesas para que se enfrenten entre todos y se repitan lo menos posible. Cada ronda tiene su propia fecha.</p>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <label style="font-size:12.5px;">Rondas <input type="number" id="rondasInput" value="${hayRondas ? g.rondas.length : (!individual && n >= 2 ? (n % 2 === 0 ? n - 1 : n) : 9)}" min="1" max="30" style="width:70px;"></label>
+    <button class="btn secondary" type="button" data-action="calc-rondas" data-game="${game}" title="Calcula cuántas rondas hacen falta para que todos jueguen contra todos">🧮 Calcular rondas necesarias</button>
+    <button class="btn" data-action="sorteo" data-game="${game}">🎲 ${hayRondas ? 'Repetir sorteo' : 'Sorteo de todas las rondas'}</button>
+    ${hayRondas ? `<button class="btn secondary" data-action="borrar-sorteo" data-game="${game}">🗑 Borrar sorteo</button>` : ''}
+  </div>
+  <div id="calcInfo" class="note" style="margin-top:8px;display:none;"></div>`;
+  const invalido = individual ? n < 4 : n < 2;
+  if(!invalido && n % k !== 0){
+    const nr = n % k;
+    html += individual
+      ? `<p class="note" style="margin-top:10px;">😴 Hay ${n} jugadores (no es múltiplo de 4): en cada ronda ${nr === 1 ? 'descansa 1 jugador' : 'descansan ' + nr + ' jugadores'}, y los descansos se reparten entre todos.</p>`
+      : `<p class="note" style="margin-top:10px;">😴 Hay ${n} parejas (número impar): en cada ronda descansa una, y el descanso se reparte entre todas. Para que todas se enfrenten entre sí hacen falta ${n} rondas.</p>`;
+  }
+  if(invalido){
+    html += `<p class="empty" style="margin-top:10px;">${individual ? `Necesitas al menos 4 jugadores apuntados (hay ${n}) para formar una mesa.` : 'Necesitas al menos 2 parejas apuntadas para repartir las mesas.'}</p>`;
+  } else if(hayRondas){
+    const cov = computeCoverage(game);
+    if(cov.covered >= cov.total){
+      html += `<p class="note" style="margin-top:10px;">✅ Con estas ${g.rondas.length} rondas todos se enfrentan con todos al menos una vez.</p>`;
+    } else {
+      html += `<p class="note" style="margin-top:10px;">⚠️ Con ${g.rondas.length} rondas quedan ${cov.total - cov.covered} enfrentamientos sin cubrir (de ${cov.total}). ${individual ? 'Prueba con más rondas.' : `Para que todas las parejas se enfrenten entre sí hacen falta al menos ${n % 2 === 0 ? n-1 : n} rondas.`}</p>`;
+    }
+    const enSorteo = new Set();
+    g.rondas.forEach(r => { r.mesas.forEach(m => m.jugadores.forEach(id => enSorteo.add(id))); (r.descansa||[]).forEach(id => enSorteo.add(id)); });
+    const fuera = g.pairs.filter(p => !enSorteo.has(p.id)).length;
+    if(fuera){
+      html += `<p class="note" style="margin-top:6px;">⚠️ Hay ${fuera} inscripci${fuera===1?'ón posterior':'ones posteriores'} al sorteo que no ${fuera===1?'está':'están'} en ninguna mesa. Repite el sorteo para incluir${fuera===1?'la':'las'}.</p>`;
+    }
+  }
+  html += `</div>`;
+
+  const rondas = g.rondas.slice().sort((a,b) => a.numero - b.numero);
+  if(rondas.length === 0){
+    html += `<div class="card"><div class="empty">Todavía no se ha hecho el sorteo de rondas.</div></div>`;
+  } else {
+    // solo la próxima ronda pendiente; al completarse todas sus mesas pasa sola a la siguiente
+    const prox = rondas.find(r => r.mesas.some(m => !m.jugada));
+    if(prox){
+      html += `<div class="note" style="margin:0 0 8px;">▶️ <strong>Próxima ronda</strong>. Al terminar todas sus mesas pasa automáticamente la siguiente. Todas las rondas y resultados están en la pestaña «Calendario».</div>`;
+      html += renderRondaCard(game, prox);
+    } else {
+      html += `<div class="card"><div class="empty">🎉 Se han jugado todas las rondas. Consulta los resultados en la pestaña «Calendario».</div></div>`;
+    }
+  }
 
   return html;
 }
@@ -1014,30 +1030,21 @@ function resumenMesa(game, mesa){
 
 function renderCalendario(game){
   const g = state.games[game];
-  const individual = isIndividual(game);
-  const rondas = (g.rondas || []).slice().sort((a, b) => a.numero - b.numero);
+  const rondas = (g.rondas || []).slice().sort((a, b) => {
+    if((a.fecha || '') !== (b.fecha || '')) return !a.fecha ? 1 : !b.fecha ? -1 : a.fecha.localeCompare(b.fecha);
+    return a.numero - b.numero;
+  });
   if(!rondas.length){
-    return `<div class="card"><h2>📅 Calendario</h2><div class="empty">Todavía no se ha hecho el sorteo. Cuando se haga, aquí verás qué se juega cada día y quién juega contra quién.</div></div>`;
+    return `<div class="card"><h2>📅 Calendario</h2><div class="empty">Todavía no se ha hecho el sorteo. Cuando se haga, aquí verás qué se juega cada día, quién juega contra quién y los resultados.</div></div>`;
   }
-  const grupos = new Map();
-  rondas.forEach(r => { const k = r.fecha || ''; if(!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(r); });
-  const claves = [...grupos.keys()].sort((a, b) => a === '' ? 1 : b === '' ? -1 : a.localeCompare(b));
-  let html = '';
-  claves.forEach(k => {
-    html += `<div class="card"><h2>📅 ${k ? esc(fmtFecha(k)) : 'Fecha por decidir'}</h2>`;
-    grupos.get(k).forEach(r => {
-      html += `<div style="margin-top:10px;"><strong>Ronda ${r.numero}</strong>`;
-      r.mesas.forEach(m => {
-        html += `<div style="border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:6px;">
-          <div style="font-size:11.5px;font-weight:600;color:#54607a;">${esc(m.label)}</div>
-          <div class="names" style="margin:2px 0;">${m.jugadores.map(pid => esc(pairName(game, pid))).join(individual ? ' · ' : ' vs ')}</div>
-          <div style="font-size:12.5px;">${resumenMesa(game, m)}</div>
-        </div>`;
-      });
-      if((r.descansa || []).length) html += `<div class="note" style="margin:6px 0 0;">😴 Descansa: <strong>${r.descansa.map(id => esc(pairName(game, id))).join(', ')}</strong></div>`;
-      html += `</div>`;
-    });
-    html += `</div>`;
+  let html = '', ultima = null;
+  rondas.forEach(r => {
+    const f = r.fecha || '';
+    if(ultima === null || f !== ultima){
+      html += `<div style="margin:14px 2px 6px;font-weight:700;color:var(--paper);font-size:15px;">📅 ${f ? esc(fmtFecha(f)) : 'Fecha por decidir'}</div>`;
+      ultima = f;
+    }
+    html += renderRondaCard(game, r);
   });
   return html;
 }
@@ -1046,11 +1053,13 @@ function renderGamePage(game){
   const verApuntarse = !state.games[game].cerrado || unlocked;   // cerrado: la pestaña «Apuntarse» solo la ve la organización
   let sub = gameSubTab[game];
   if(!['apuntarse', 'parejas', 'mesas', 'calendario'].includes(sub)) sub = 'apuntarse';
-  if(sub === 'apuntarse' && !verApuntarse) sub = 'parejas';
+  const verParejas = !state.games[game].cerrado || unlocked;      // cerrado: tampoco se ve la lista de inscritos
+  if(sub === 'apuntarse' && !verApuntarse) sub = 'mesas';
+  if(sub === 'parejas' && !verParejas) sub = 'mesas';
   gameSubTab[game] = sub;
   let html = `<div class="subtabbar">
     ${verApuntarse ? `<button class="subtab ${sub==='apuntarse'?'active':''}" data-subtab="apuntarse" data-game="${game}">Apuntarse</button>` : ''}
-    <button class="subtab ${sub==='parejas'?'active':''}" data-subtab="parejas" data-game="${game}">${isIndividual(game)?'Jugadores apuntados':'Parejas apuntadas'}</button>
+    ${verParejas ? `<button class="subtab ${sub==='parejas'?'active':''}" data-subtab="parejas" data-game="${game}">${isIndividual(game)?'Jugadores apuntados':'Parejas apuntadas'}</button>` : ''}
     <button class="subtab ${sub==='mesas'?'active':''}" data-subtab="mesas" data-game="${game}">Clasificación</button>
     <button class="subtab ${sub==='calendario'?'active':''}" data-subtab="calendario" data-game="${game}">Calendario</button>
   </div>`;
