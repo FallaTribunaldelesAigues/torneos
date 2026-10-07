@@ -617,6 +617,8 @@ function shuffleArray(arr){
 function pairKey(a,b){ return [a,b].sort().join('|'); }
 
 // Chinchón: mesas de 4 jugadores. Resto de torneos: mesas de 2 parejas.
+// Torneos cuyo resultado se anota en camas (ganadas/perdidas por pareja): Truc y Dominó
+function usaCamas(game){ return game === 'truc' || game === 'domino'; }
 function tableSize(game){ return isIndividual(game) ? 4 : 2; }
 
 // Genera todas las rondas de golpe. Mesas de k; si sobran jugadores (n no múltiplo de k) descansan, repartiendo
@@ -688,7 +690,7 @@ function generateSchedule(ids, R, k, maxMs){
 //  truc: diferencia de camas y luego camas ganadas · parchís: más fichas rivales dejadas fuera
 //  dominó y chinchón: menos puntos en las partidas ganadas
 function desempate(game, s){
-  if(game === 'truc') return [s.cf - s.cc, s.cf];
+  if(usaCamas(game)) return [s.cf - s.cc, s.cf];
   if(game === 'parchis') return [s.fuera];
   return [-s.puntos];
 }
@@ -707,7 +709,7 @@ function computeStandings(game){
     ronda.mesas.forEach(mesa => {
       if(!mesa.jugada) return;
       mesa.jugadores.forEach(pid => { if(stats[pid]) stats[pid].pj++; });
-      if(game === 'truc' && mesa.camas){
+      if(usaCamas(game) && mesa.camas){
         mesa.jugadores.forEach(pid => {
           const otro = mesa.jugadores.find(x => x !== pid);
           if(stats[pid]){ stats[pid].cf += Number(mesa.camas[pid])||0; stats[pid].cc += Number(mesa.camas[otro])||0; }
@@ -716,7 +718,7 @@ function computeStandings(game){
       if(mesa.ganadorId && stats[mesa.ganadorId]){
         stats[mesa.ganadorId].g++;
         if(game === 'parchis') stats[mesa.ganadorId].fuera += Number(mesa.puntos)||0;
-        else if(game !== 'truc') stats[mesa.ganadorId].puntos += Number(mesa.puntos)||0;
+        else if(!usaCamas(game)) stats[mesa.ganadorId].puntos += Number(mesa.puntos)||0;
       }
     });
   });
@@ -754,7 +756,7 @@ function getChampion(game){
 }
 
 // Rondas necesarias para que todos se enfrenten con todos al menos una vez
-const rondasCache = {};
+const rondasCache = {}, rondasSched = {};
 function calcRondasNecesarias(game){
   const n = state.games[game].pairs.length, k = tableSize(game);
   if(n < k) return null;
@@ -766,7 +768,7 @@ function calcRondasNecesarias(game){
   for(; R < 30; R++){
     const sc = generateSchedule(ids, R, k, 900), seen = new Set();
     sc.forEach(r => r.mesas.forEach(m => { for(let i = 0; i < m.length; i++) for(let j = i+1; j < m.length; j++) seen.add(pairKey(m[i], m[j])); }));
-    if(seen.size >= P) break;
+    if(seen.size >= P){ rondasSched[key] = { R, sc }; break; }
   }
   rondasCache[key] = R;
   return R;
@@ -785,11 +787,11 @@ function renderMesas(game){
   let html = '';
   const standings = computeStandings(game);
   html += `<div class="card"><h2>🏆 Clasificación general</h2>
-  <table class="standings"><thead><tr><th>${individual?'Jugador':'Pareja'}</th><th>Partidas jugadas</th><th>Victorias</th>${game==='truc' ? '<th>Camas +</th><th>Camas −</th>' : game==='parchis' ? '<th>Fichas rivales fuera</th>' : '<th>Puntos</th>'}</tr></thead><tbody>` +
-  standings.map((s,i) => `<tr><td>${i===0 && s.g>0 ? '🥇 ' : ''}${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td>${game==='truc' ? `<td>${s.cf}</td><td>${s.cc}</td>` : game==='parchis' ? `<td>${s.fuera}</td>` : `<td>${s.puntos}</td>`}</tr>`).join('') +
+  <table class="standings"><thead><tr><th>${individual?'Jugador':'Pareja'}</th><th>Partidas jugadas</th><th>Victorias</th>${usaCamas(game) ? '<th>Camas +</th><th>Camas −</th>' : game==='parchis' ? '<th>Fichas rivales fuera</th>' : '<th>Puntos</th>'}</tr></thead><tbody>` +
+  standings.map((s,i) => `<tr><td>${i===0 && s.g>0 ? '🥇 ' : ''}${esc(s.nombre)}</td><td>${s.pj}</td><td>${s.g}</td>${usaCamas(game) ? `<td>${s.cf}</td><td>${s.cc}</td>` : game==='parchis' ? `<td>${s.fuera}</td>` : `<td>${s.puntos}</td>`}</tr>`).join('') +
   `</tbody></table>
   <div class="note" style="margin-top:8px;">${
-    game==='truc' ? 'Gana quien más partidas haya ganado (una partida termina cuando una pareja llega a 2 camas). En caso de empate, gana la mejor diferencia de camas (ganadas − perdidas) y después quien más camas haya ganado.'
+    usaCamas(game) ? `Gana quien más partidas haya ganado${game === 'truc' ? ' (una partida termina cuando una pareja llega a 2 camas)' : ''}. En caso de empate, gana la mejor diferencia de camas (ganadas − perdidas) y después quien más camas haya ganado.`
     : game==='parchis' ? 'Gana quien más partidas haya ganado. En caso de empate a victorias, gana quien haya dejado más fichas del equipo rival sin meter en las partidas ganadas.'
     : 'Gana quien más partidas haya ganado. En caso de empate a victorias, gana quien menos puntos acumule en las partidas ganadas.'}</div>
   </div>`;
@@ -864,7 +866,7 @@ function renderMesas(game){
         <div class="names" style="margin:6px 0;">${nombres.map(esc).join(individual ? ' · ' : ' vs ')}</div>`;
       if(mesa.jugada && !editando){
         const nom = pid => esc(pairName(game, pid));
-        if(game === 'truc'){
+        if(usaCamas(game)){
           const cm = mesa.camas || {};
           html += `<div class="score"><span class="win">🏆 ${nom(mesa.ganadorId)}</span> gana · camas: ${mesa.jugadores.map(pid => `${nom(pid)} <strong>${Number(cm[pid])||0}</strong>`).join(' — ')}</div>`;
         } else if(game === 'parchis'){
@@ -878,14 +880,15 @@ function renderMesas(game){
         const cancel = editando ? `<button class="btn secondary small" type="button" data-action="cancel-edit-mesa">Cancelar</button>` : '';
         const lbl = 'font-size:11.5px;font-weight:600;color:#54607a;';
         const formAttrs = `data-action="mesa-resultado" data-game="${game}" data-ronda="${ronda.id}" data-id="${mesa.id}" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:6px;"`;
-        if(game === 'truc'){
+        if(usaCamas(game)){
           const cm = mesa.camas || {};
+          const maxC = game === 'truc' ? 2 : 99;
           html += `<form ${formAttrs}>
-            ${mesa.jugadores.map((pid, i) => `<label style="${lbl}">🛏 Camas · ${esc(pairName(game, pid))}<br><input type="number" name="camas${i}" min="0" max="2" placeholder="0-2" value="${mesa.jugada && cm[pid] !== undefined ? esc(String(cm[pid])) : ''}" style="width:90px;margin-top:4px;" required></label>`).join('')}
+            ${mesa.jugadores.map((pid, i) => `<label style="${lbl}">🛏 Camas · ${esc(pairName(game, pid))}<br><input type="number" name="camas${i}" min="0" max="${maxC}" placeholder="${game === 'truc' ? '0-2' : 'Camas'}" value="${mesa.jugada && cm[pid] !== undefined ? esc(String(cm[pid])) : ''}" style="width:90px;margin-top:4px;" required></label>`).join('')}
             <button class="btn small" type="submit">Guardar resultado</button>
             ${cancel}
           </form>
-          <div class="note" style="margin-top:4px;">La partida termina cuando una pareja llega a 2 camas (2-0 o 2-1). La pareja ganadora se calcula sola.</div>`;
+          <div class="note" style="margin-top:4px;">${game === 'truc' ? 'La partida termina cuando una pareja llega a 2 camas (2-0 o 2-1).' : 'Anota las camas ganadas por cada pareja (no puede haber empate).'} La pareja ganadora se calcula sola.</div>`;
         } else {
           const campo = game === 'parchis'
             ? `<label style="${lbl}">Fichas rivales fuera<br><input type="number" name="puntos" placeholder="Fichas" min="0" max="8" value="${puntosVal}" style="width:90px;margin-top:4px;" required></label>`
@@ -982,19 +985,63 @@ function renderResumen(){
   return html;
 }
 
-function renderGamePage(game){
-  let sub = gameSubTab[game];
-  if(sub !== 'apuntarse' && sub !== 'parejas' && sub !== 'mesas'){
-    sub = 'apuntarse';
-    gameSubTab[game] = sub;
+// Resumen corto del resultado de una mesa (para el calendario)
+function resumenMesa(game, mesa){
+  if(!mesa.jugada) return '<span style="color:#7c8598;">por jugar</span>';
+  const nom = esc(pairName(game, mesa.ganadorId));
+  if(usaCamas(game)){
+    const cm = mesa.camas || {};
+    return `🏆 <strong>${nom}</strong> · ${mesa.jugadores.map(pid => Number(cm[pid]) || 0).join(' – ')} camas`;
   }
+  if(game === 'parchis') return `🏆 <strong>${nom}</strong> · ${esc(String(mesa.puntos))} ${Number(mesa.puntos) === 1 ? 'ficha rival fuera' : 'fichas rivales fuera'}`;
+  return `🏆 <strong>${nom}</strong> · ${esc(String(mesa.puntos))} puntos`;
+}
+
+function renderCalendario(game){
+  const g = state.games[game];
+  const individual = isIndividual(game);
+  const rondas = (g.rondas || []).slice().sort((a, b) => a.numero - b.numero);
+  if(!rondas.length){
+    return `<div class="card"><h2>📅 Calendario</h2><div class="empty">Todavía no se ha hecho el sorteo. Cuando se haga, aquí verás qué se juega cada día y quién juega contra quién.</div></div>`;
+  }
+  const grupos = new Map();
+  rondas.forEach(r => { const k = r.fecha || ''; if(!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(r); });
+  const claves = [...grupos.keys()].sort((a, b) => a === '' ? 1 : b === '' ? -1 : a.localeCompare(b));
+  let html = '';
+  claves.forEach(k => {
+    html += `<div class="card"><h2>📅 ${k ? esc(fmtFecha(k)) : 'Fecha por decidir'}</h2>`;
+    grupos.get(k).forEach(r => {
+      html += `<div style="margin-top:10px;"><strong>Ronda ${r.numero}</strong>`;
+      r.mesas.forEach(m => {
+        html += `<div style="border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-top:6px;">
+          <div style="font-size:11.5px;font-weight:600;color:#54607a;">${esc(m.label)}</div>
+          <div class="names" style="margin:2px 0;">${m.jugadores.map(pid => esc(pairName(game, pid))).join(individual ? ' · ' : ' vs ')}</div>
+          <div style="font-size:12.5px;">${resumenMesa(game, m)}</div>
+        </div>`;
+      });
+      if((r.descansa || []).length) html += `<div class="note" style="margin:6px 0 0;">😴 Descansa: <strong>${r.descansa.map(id => esc(pairName(game, id))).join(', ')}</strong></div>`;
+      html += `</div>`;
+    });
+    html += `</div>`;
+  });
+  return html;
+}
+
+function renderGamePage(game){
+  const verApuntarse = !state.games[game].cerrado || unlocked;   // cerrado: la pestaña «Apuntarse» solo la ve la organización
+  let sub = gameSubTab[game];
+  if(!['apuntarse', 'parejas', 'mesas', 'calendario'].includes(sub)) sub = 'apuntarse';
+  if(sub === 'apuntarse' && !verApuntarse) sub = 'parejas';
+  gameSubTab[game] = sub;
   let html = `<div class="subtabbar">
-    <button class="subtab ${sub==='apuntarse'?'active':''}" data-subtab="apuntarse" data-game="${game}">Apuntarse</button>
+    ${verApuntarse ? `<button class="subtab ${sub==='apuntarse'?'active':''}" data-subtab="apuntarse" data-game="${game}">Apuntarse</button>` : ''}
     <button class="subtab ${sub==='parejas'?'active':''}" data-subtab="parejas" data-game="${game}">${isIndividual(game)?'Jugadores apuntados':'Parejas apuntadas'}</button>
-    <button class="subtab ${sub==='mesas'?'active':''}" data-subtab="mesas" data-game="${game}">Mesas</button>
+    <button class="subtab ${sub==='mesas'?'active':''}" data-subtab="mesas" data-game="${game}">Clasificación</button>
+    <button class="subtab ${sub==='calendario'?'active':''}" data-subtab="calendario" data-game="${game}">Calendario</button>
   </div>`;
   if(sub === 'apuntarse') html += renderApuntarse(game);
   else if(sub === 'parejas') html += renderParejasApuntadas(game);
+  else if(sub === 'calendario') html += renderCalendario(game);
   else html += renderMesas(game);
   return html;
 }
@@ -1043,7 +1090,7 @@ function renderParejasApuntadas(game){
       <button class="iconbtn" data-action="edit-pair" data-game="${game}" data-id="${p.id}" title="Editar">✏️</button>
       <button class="iconbtn" data-action="delete-pair" data-game="${game}" data-id="${p.id}" title="Eliminar">✕</button>
     </span>`).join('') + `</div>
-    <p style="font-size:11.5px;color:#7c8598;margin-top:8px;">Las mesas se forman por sorteo en la pestaña «Mesas».</p></div>`;
+    <p style="font-size:11.5px;color:#7c8598;margin-top:8px;">Las mesas se forman por sorteo en la pestaña «Clasificación».</p></div>`;
   return html;
 }
 
@@ -1179,7 +1226,15 @@ document.addEventListener('click', e => {
         if(!confirm(msg)) return;
       }
       const fechasPrevias = previas.map(r => r.fecha || '');
-      const schedule = generateSchedule(g.pairs.map(p => p.id), R, k);
+      // si se acaba de calcular el nº de rondas, se usa ese mismo reparto (garantiza la cobertura); solo una vez
+      const ck = game + ':' + nIns, pre = rondasSched[ck];
+      let schedule;
+      if(pre && pre.R === R && nIns === g.pairs.length){
+        schedule = pre.sc.map(rd => ({ mesas: rd.mesas.map(m => m.map(i => g.pairs[i].id)), descansa: rd.descansa.map(i => g.pairs[i].id) }));
+      } else {
+        schedule = generateSchedule(g.pairs.map(p => p.id), R, k);
+      }
+      delete rondasSched[ck];
       g.rondas = schedule.map((rd, r) => ({
         id: uid(), numero: r + 1, fecha: fechasPrevias[r] || '', descansa: rd.descansa,
         mesas: rd.mesas.map((js, i) => ({ id: uid(), label: `Mesa ${i+1}`, jugadores: js, jugada:false, ganadorId:null, puntos:null }))
@@ -1271,13 +1326,20 @@ document.addEventListener('submit', e => {
       const ronda = form.dataset.ronda, id = form.dataset.id;
       const r = (state.games[game].rondas||[]).find(r => r.id === ronda);
       const mesa = r && r.mesas.find(m => m.id === id);
-      if(mesa && game === 'truc'){
+      if(mesa && usaCamas(game)){
         const c = mesa.jugadores.map((_, i) => Number(fd.get('camas' + i)));
-        const ok = c.length === 2 && c.every(x => Number.isInteger(x) && x >= 0 && x <= 2) && Math.max(...c) === 2 && Math.min(...c) <= 1;
-        if(!ok){ alert('Resultado no válido: una pareja tiene que llegar a 2 camas y la otra a 0 o 1.'); return; }
+        let ok, msg;
+        if(game === 'truc'){
+          ok = c.length === 2 && c.every(x => Number.isInteger(x) && x >= 0 && x <= 2) && Math.max(...c) === 2 && Math.min(...c) <= 1;
+          msg = 'Resultado no válido: una pareja tiene que llegar a 2 camas y la otra a 0 o 1.';
+        } else {
+          ok = c.length === 2 && c.every(x => Number.isInteger(x) && x >= 0 && x <= 99) && c[0] !== c[1];
+          msg = 'Resultado no válido: indica las camas de cada pareja (números enteros) y no puede haber empate.';
+        }
+        if(!ok){ alert(msg); return; }
         mesa.camas = {};
         mesa.jugadores.forEach((pid, i) => { mesa.camas[pid] = c[i]; });
-        mesa.ganadorId = c[0] === 2 ? mesa.jugadores[0] : mesa.jugadores[1];
+        mesa.ganadorId = c[0] > c[1] ? mesa.jugadores[0] : mesa.jugadores[1];
         mesa.puntos = null;
         mesa.jugada = true;
       } else if(mesa){
