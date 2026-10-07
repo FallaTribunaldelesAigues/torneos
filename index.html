@@ -283,7 +283,22 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 let sbClient = null;
 try{
   if(window.supabase && typeof window.supabase.createClient === 'function'){
-    sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    // Algunos visores incrustados (vista previa dentro de una app) no pueden copiar objetos Headers
+    // entre ventanas y fallan con DataCloneError: se convierten a un objeto simple antes de llamar a fetch.
+    const fetchSeguro = (input, init) => {
+      try{
+        if(init && init.headers && typeof init.headers.forEach === 'function' && !Array.isArray(init.headers)){
+          const h = {}; init.headers.forEach((v, k) => { h[k] = v; });
+          init = Object.assign({}, init, { headers: h });
+        }
+        if(typeof Request !== 'undefined' && input instanceof Request){
+          const h = {}; input.headers.forEach((v, k) => { h[k] = v; });
+          return window.fetch(input.url, Object.assign({ method: input.method, headers: h }, init || {}));
+        }
+      }catch(e){ /* si algo falla se usa el fetch normal */ }
+      return window.fetch(input, init);
+    };
+    sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { global: { fetch: fetchSeguro } });
   }
 }catch(e){ console.error('No se pudo inicializar Supabase', e); }
 
