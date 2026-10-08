@@ -458,6 +458,32 @@ function updateLockBadge(){
   b.textContent = unlocked ? '🔓 Editar' : '🔒 Bloqueado';
 }
 
+// ---- Desbloqueo con huella / Face ID (WebAuthn, solo en este dispositivo) ----
+const BIO_KEY = 'torneo-falla-bio';
+function bioSoportado(){ return !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext); }
+function bioRegistrado(){ try{ return !!localStorage.getItem(BIO_KEY); }catch(e){ return false; } }
+function b64u(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function b64uBuf(str){ str = str.replace(/-/g,'+').replace(/_/g,'/'); while(str.length % 4) str += '='; return Uint8Array.from(atob(str), c => c.charCodeAt(0)); }
+async function bioRegistrar(){
+  const cred = await navigator.credentials.create({ publicKey: {
+    challenge: crypto.getRandomValues(new Uint8Array(32)),
+    rp: { name: 'Torneos de la Falla' },
+    user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'organizacion', displayName: 'Organización' },
+    pubKeyCredParams: [{ type:'public-key', alg:-7 }, { type:'public-key', alg:-257 }],
+    authenticatorSelection: { authenticatorAttachment:'platform', userVerification:'required', residentKey:'discouraged' },
+    timeout: 60000
+  }});
+  localStorage.setItem(BIO_KEY, b64u(cred.rawId));
+}
+async function bioVerificar(){
+  await navigator.credentials.get({ publicKey: {
+    challenge: crypto.getRandomValues(new Uint8Array(32)),
+    allowCredentials: [{ type:'public-key', id: b64uBuf(localStorage.getItem(BIO_KEY)) }],
+    userVerification: 'required',
+    timeout: 60000
+  }});
+}
+
 function showPinModal(onSuccess){
   const configuring = !pinConfigured;
   const root = document.getElementById('modalRoot');
@@ -469,6 +495,8 @@ function showPinModal(onSuccess){
         : 'Pide el PIN a la organización para poder editar resultados. Solo hace falta una vez por dispositivo.'}</p>
       <input type="password" inputmode="numeric" id="pinInput" placeholder="PIN" autocomplete="one-time-code">
       <div id="pinError" class="pin-error" style="display:none;">PIN incorrecto, inténtalo otra vez.</div>
+      ${!configuring && bioSoportado() && bioRegistrado() ? '<button class="btn secondary" id="bioBtn" type="button" style="width:100%;margin:8px 0;">👆 Entrar con huella / Face ID</button>' : ''}
+      ${!configuring && bioSoportado() && !bioRegistrado() ? '<label style="display:flex;gap:8px;align-items:center;font-size:.9rem;margin:8px 0;"><input type="checkbox" id="bioChk"> Activar huella / Face ID en este dispositivo</label>' : ''}
       <div class="modal-actions">
         <button class="btn secondary" id="pinCancel" type="button">Cancelar</button>
         <button class="btn" id="pinConfirm" type="button">${configuring ? 'Guardar PIN' : 'Entrar'}</button>
@@ -480,6 +508,22 @@ function showPinModal(onSuccess){
     if(ev.key === 'Enter'){ ev.preventDefault(); document.getElementById('pinConfirm').click(); }
   });
   document.getElementById('pinCancel').onclick = () => { root.innerHTML = ''; };
+  const bioBtn = document.getElementById('bioBtn');
+  if(bioBtn) bioBtn.onclick = async () => {
+    try{
+      await bioVerificar();
+      unlocked = true;
+      localStorage.setItem(PIN_UNLOCKED_KEY, 'true');
+      root.innerHTML = '';
+      updateLockBadge();
+      render();
+      if(onSuccess) onSuccess();
+    }catch(e){
+      const er = document.getElementById('pinError');
+      er.textContent = 'No se ha podido verificar. Usa el PIN.';
+      er.style.display = 'block';
+    }
+  };
   document.getElementById('pinConfirm').onclick = async () => {
     const val = document.getElementById('pinInput').value.trim();
     if(!val) return;
@@ -493,6 +537,10 @@ function showPinModal(onSuccess){
       render();
       if(onSuccess) onSuccess();
     } else if(val === pinConfigured){
+      const chk = document.getElementById('bioChk');
+      if(chk && chk.checked){
+        try{ await bioRegistrar(); }catch(e){ alert('No se ha podido activar la huella / Face ID en este dispositivo. Seguirás usando el PIN.'); }
+      }
       unlocked = true;
       localStorage.setItem(PIN_UNLOCKED_KEY, 'true');
       root.innerHTML = '';
