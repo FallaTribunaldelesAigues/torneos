@@ -940,7 +940,66 @@ function renderMesas(game){
   return html;
 }
 
+// ---------- Contador de visitas (anónimo: un código aleatorio por dispositivo, sin nombres ni IP) ----------
+const VISITOR_KEY = 'torneo-falla-visitor';
+let visitorId = null;
+const visitasEnviadas = new Set();
+function getVisitorId(){
+  if(visitorId) return visitorId;
+  try{ visitorId = localStorage.getItem(VISITOR_KEY); }catch(e){}
+  if(!visitorId){
+    visitorId = 'v' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+    try{ localStorage.setItem(VISITOR_KEY, visitorId); }catch(e){}
+  }
+  return visitorId;
+}
+function trackVisit(tab){
+  try{
+    const torneo = tab === 'home' ? 'portada' : tab;
+    if(!sbClient || unlocked || !['portada', 'domino', 'truc', 'parchis', 'chinchon'].includes(torneo)) return;   // la organización no cuenta
+    if(visitasEnviadas.has(torneo)) return;
+    visitasEnviadas.add(torneo);
+    Promise.resolve(sbClient.rpc('registrar_visita', { p_visitor: getVisitorId(), p_torneo: torneo })).catch(() => {});
+  }catch(e){}
+}
+let visitasData = null;
+async function cargarVisitas(){
+  visitasData = { cargando: true }; render();
+  try{
+    const { data, error } = await sbClient.rpc('leer_visitas', { p_pin: pinConfigured });
+    if(error) throw new Error(error.message || 'error');
+    visitasData = data;
+  }catch(e){
+    visitasData = { error: (e && e.message) ? e.message : String(e) };
+  }
+  render();
+}
+function renderVisitas(){
+  if(!unlocked || !sbClient) return '';
+  let html = `<div class="card" style="margin-top:14px;"><h2>📈 Visitas</h2>
+    <p style="font-size:12.5px;color:#54607a;margin:-6px 0 10px;">Cuántas personas han entrado en la app (cada dispositivo cuenta una vez al día; no se guardan nombres ni datos personales). Tus propias visitas con el PIN no cuentan.</p>
+    <button class="btn secondary" data-action="cargar-visitas">${visitasData ? '🔄 Actualizar' : '📈 Ver visitas'}</button>`;
+  const v = visitasData;
+  if(v && v.cargando) html += `<p class="note" style="margin-top:10px;">Cargando…</p>`;
+  else if(v && v.error) html += `<p class="note" style="margin-top:10px;">⚠️ No se pudieron leer las visitas: ${esc(v.error)}</p>`;
+  else if(v){
+    const fd = d => { const x = String(d).split('-').map(Number); return new Date(x[0], x[1]-1, x[2]).toLocaleDateString('es-ES', { weekday:'short', day:'numeric', month:'short' }); };
+    const nombre = t => t === 'portada' ? 'Portada' : (GAMES[t] ? GAMES[t].name : t);
+    html += `<p style="margin:12px 0 6px;"><strong>${v.total_visitantes || 0}</strong> dispositivos distintos en total</p>`;
+    if((v.por_dia || []).length){
+      html += `<table class="standings"><thead><tr><th>Día</th><th>Dispositivos</th><th>Visitas</th></tr></thead><tbody>` +
+        v.por_dia.map(d => `<tr><td>${esc(fd(d.dia))}</td><td>${d.visitantes}</td><td>${d.visitas}</td></tr>`).join('') + `</tbody></table>`;
+    } else html += `<p class="note">Todavía no hay visitas registradas.</p>`;
+    if((v.por_torneo || []).length){
+      html += `<table class="standings"><thead><tr><th>Sección</th><th>Dispositivos</th><th>Visitas</th></tr></thead><tbody>` +
+        v.por_torneo.map(d => `<tr><td>${esc(nombre(d.torneo))}</td><td>${d.visitantes}</td><td>${d.visitas}</td></tr>`).join('') + `</tbody></table>`;
+    }
+  }
+  return html + `</div>`;
+}
+
 function render(){
+  trackVisit(currentTab);
   renderBunting();
   const app = document.getElementById('app');
   if(currentTab === 'home'){
@@ -1006,6 +1065,7 @@ function renderResumen(){
     </div>`;
   });
   html += `</div><div class="note">Cualquiera puede apuntarse a un torneo. Hacer el sorteo de mesas, meter resultados y poner fechas requiere el PIN de organización.</div>`;
+  html += renderVisitas();
   if(unlocked) html += `<div class="card" style="margin-top:14px;"><h2>💾 Copia de seguridad</h2>
     <p style="font-size:12.5px;color:#54607a;margin:-6px 0 10px;">Descarga un archivo con todos los datos (inscritos, sorteos y resultados). Guárdalo en tu móvil u ordenador; si algún día se pierde algo, se restaura desde aquí. Se recomienda descargar una copia después de cada noche de torneo.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -1166,6 +1226,7 @@ document.addEventListener('change', e => {
 });
 
 document.addEventListener('click', e => {
+  if(e.target.closest('[data-action="cargar-visitas"]')){ if(unlocked) cargarVisitas(); return; }
   const calc = e.target.closest('[data-action="calc-rondas"]');
   if(calc){
     const game = calc.dataset.game, info = document.getElementById('calcInfo'), inp = document.getElementById('rondasInput');
