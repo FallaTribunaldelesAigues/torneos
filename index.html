@@ -467,7 +467,7 @@ function showPinModal(onSuccess){
       <p class="modal-desc">${configuring
         ? 'Este PIN lo usará el equipo organizador para poder añadir o borrar resultados. Compartidlo solo entre vosotros.'
         : 'Pide el PIN a la organización para poder editar resultados. Solo hace falta una vez por dispositivo.'}</p>
-      <input type="text" inputmode="numeric" id="pinInput" placeholder="PIN" autocomplete="off">
+      <input type="password" inputmode="numeric" id="pinInput" placeholder="PIN" autocomplete="one-time-code">
       <div id="pinError" class="pin-error" style="display:none;">PIN incorrecto, inténtalo otra vez.</div>
       <div class="modal-actions">
         <button class="btn secondary" id="pinCancel" type="button">Cancelar</button>
